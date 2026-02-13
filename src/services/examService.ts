@@ -1,18 +1,18 @@
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  getDoc, 
-  getDocs, 
-  updateDoc, 
+import {
+  collection,
+  doc,
+  addDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
   deleteDoc,
   query,
   where,
   orderBy,
   serverTimestamp,
-  Timestamp 
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+  Timestamp,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 export interface Exam {
   id: string;
@@ -47,7 +47,10 @@ export interface ExamFormData {
 /**
  * Create a new exam in Firestore
  */
-export async function createExam(formData: ExamFormData, userId: string): Promise<Exam> {
+export async function createExam(
+  formData: ExamFormData,
+  userId: string,
+): Promise<Exam> {
   try {
     const examData = {
       title: formData.name,
@@ -63,8 +66,8 @@ export async function createExam(formData: ExamFormData, userId: string): Promis
       className: formData.className || null,
       classId: formData.classId || null,
     };
-    const docRef = await addDoc(collection(db, 'exams'), examData);
-    
+    const docRef = await addDoc(collection(db, "exams"), examData);
+
     // Return the exam with the generated ID
     const newExam: Exam = {
       id: docRef.id,
@@ -82,8 +85,8 @@ export async function createExam(formData: ExamFormData, userId: string): Promis
 
     return newExam;
   } catch (error) {
-    console.error('Error creating exam:', error);
-    throw new Error('Failed to create exam');
+    console.error("Error creating exam:", error);
+    throw new Error("Failed to create exam");
   }
 }
 
@@ -95,12 +98,9 @@ export async function getExams(userId?: string): Promise<Exam[]> {
     let q;
     if (userId) {
       // Remove orderBy to avoid composite index requirement
-      q = query(
-        collection(db, 'exams'),
-        where('createdBy', '==', userId)
-      );
+      q = query(collection(db, "exams"), where("createdBy", "==", userId));
     } else {
-      q = query(collection(db, 'exams'), orderBy('createdAt', 'desc'));
+      q = query(collection(db, "exams"), orderBy("createdAt", "desc"));
     }
 
     const querySnapshot = await getDocs(q);
@@ -114,11 +114,15 @@ export async function getExams(userId?: string): Promise<Exam[]> {
         subject: data.subject,
         num_items: data.num_items,
         choices_per_item: data.choices_per_item,
-        created_at: data.created_at || data.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
+        created_at:
+          data.created_at ||
+          data.createdAt?.toDate?.().toISOString() ||
+          new Date().toISOString(),
         answer_keys: data.answer_keys || [],
         generated_sheets: data.generated_sheets || [],
         createdBy: data.createdBy,
-        updatedAt: data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+        updatedAt:
+          data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
         className: data.className || undefined,
       });
     });
@@ -134,8 +138,8 @@ export async function getExams(userId?: string): Promise<Exam[]> {
 
     return exams;
   } catch (error) {
-    console.error('Error fetching exams:', error);
-    throw new Error('Failed to fetch exams');
+    console.error("Error fetching exams:", error);
+    throw new Error("Failed to fetch exams");
   }
 }
 
@@ -144,7 +148,7 @@ export async function getExams(userId?: string): Promise<Exam[]> {
  */
 export async function getExamById(examId: string): Promise<Exam | null> {
   try {
-    const docRef = doc(db, 'exams', examId);
+    const docRef = doc(db, "exams", examId);
     const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
@@ -158,32 +162,39 @@ export async function getExamById(examId: string): Promise<Exam | null> {
       subject: data.subject,
       num_items: data.num_items,
       choices_per_item: data.choices_per_item,
-      created_at: data.created_at || data.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
+      created_at:
+        data.created_at ||
+        data.createdAt?.toDate?.().toISOString() ||
+        new Date().toISOString(),
       answer_keys: data.answer_keys || [],
       generated_sheets: data.generated_sheets || [],
       createdBy: data.createdBy,
-      updatedAt: data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+      updatedAt:
+        data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
       className: data.className || undefined,
     };
   } catch (error) {
-    console.error('Error fetching exam:', error);
-    throw new Error('Failed to fetch exam');
+    console.error("Error fetching exam:", error);
+    throw new Error("Failed to fetch exam");
   }
 }
 
 /**
  * Update an existing exam
  */
-export async function updateExam(examId: string, updates: Partial<Exam>): Promise<void> {
+export async function updateExam(
+  examId: string,
+  updates: Partial<Exam>,
+): Promise<void> {
   try {
-    const docRef = doc(db, 'exams', examId);
+    const docRef = doc(db, "exams", examId);
     await updateDoc(docRef, {
       ...updates,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    console.error('Error updating exam:', error);
-    throw new Error('Failed to update exam');
+    console.error("Error updating exam:", error);
+    throw new Error("Failed to update exam");
   }
 }
 
@@ -192,58 +203,64 @@ export async function updateExam(examId: string, updates: Partial<Exam>): Promis
  */
 export async function deleteExam(examId: string): Promise<void> {
   try {
-    const docRef = doc(db, 'exams', examId);
+    const docRef = doc(db, "exams", examId);
     await deleteDoc(docRef);
   } catch (error) {
-    console.error('Error deleting exam:', error);
-    throw new Error('Failed to delete exam');
+    console.error("Error deleting exam:", error);
+    throw new Error("Failed to delete exam");
   }
 }
 
 /**
  * Add an answer key to an exam
  */
-export async function addAnswerKeyToExam(examId: string, answerKeyId: string): Promise<void> {
+export async function addAnswerKeyToExam(
+  examId: string,
+  answerKeyId: string,
+): Promise<void> {
   try {
-    const docRef = doc(db, 'exams', examId);
+    const docRef = doc(db, "exams", examId);
     const docSnap = await getDoc(docRef);
-    
+
     if (!docSnap.exists()) {
-      throw new Error('Exam not found');
+      throw new Error("Exam not found");
     }
 
     const currentAnswerKeys = docSnap.data().answer_keys || [];
-    
+
     await updateDoc(docRef, {
       answer_keys: [...currentAnswerKeys, answerKeyId],
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    console.error('Error adding answer key to exam:', error);
-    throw new Error('Failed to add answer key to exam');
+    console.error("Error adding answer key to exam:", error);
+    throw new Error("Failed to add answer key to exam");
   }
 }
 
 /**
  * Add a generated sheet to an exam
  */
-export async function addGeneratedSheetToExam(examId: string, sheet: GeneratedSheet): Promise<void> {
+export async function addGeneratedSheetToExam(
+  examId: string,
+  sheet: GeneratedSheet,
+): Promise<void> {
   try {
-    const docRef = doc(db, 'exams', examId);
+    const docRef = doc(db, "exams", examId);
     const docSnap = await getDoc(docRef);
-    
+
     if (!docSnap.exists()) {
-      throw new Error('Exam not found');
+      throw new Error("Exam not found");
     }
 
     const currentSheets = docSnap.data().generated_sheets || [];
-    
+
     await updateDoc(docRef, {
       generated_sheets: [...currentSheets, sheet],
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    console.error('Error adding generated sheet to exam:', error);
-    throw new Error('Failed to add generated sheet to exam');
+    console.error("Error adding generated sheet to exam:", error);
+    throw new Error("Failed to add generated sheet to exam");
   }
 }
