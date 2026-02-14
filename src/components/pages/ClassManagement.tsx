@@ -78,11 +78,7 @@ export default function ClassManagement() {
     class_name: "",
     course_subject: "",
     section_block: "",
-    schedule_day: "",
-    schedule_time: "",
     room: "",
-    semester: "",
-    school_year: "",
   });
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -143,11 +139,7 @@ export default function ClassManagement() {
         class_name: "",
         course_subject: "",
         section_block: "",
-        schedule_day: "",
-        schedule_time: "",
         room: "",
-        semester: "",
-        school_year: "",
       });
       setStudents([]);
       setCurrentTab("basic");
@@ -181,11 +173,7 @@ export default function ClassManagement() {
       class_name: classItem.class_name,
       course_subject: classItem.course_subject,
       section_block: classItem.section_block,
-      schedule_day: classItem.schedule_day,
-      schedule_time: classItem.schedule_time,
       room: classItem.room,
-      semester: classItem.semester,
-      school_year: classItem.school_year,
     });
     setStudents(classItem.students);
     setCurrentTab("basic");
@@ -211,11 +199,7 @@ export default function ClassManagement() {
         class_name: newClass.class_name,
         course_subject: newClass.course_subject,
         section_block: newClass.section_block,
-        schedule_day: newClass.schedule_day || "",
-        schedule_time: newClass.schedule_time || "",
         room: newClass.room || "",
-        semester: newClass.semester || "",
-        school_year: newClass.school_year || "",
         students: students || [],
       };
 
@@ -241,11 +225,7 @@ export default function ClassManagement() {
         class_name: "",
         course_subject: "",
         section_block: "",
-        schedule_day: "",
-        schedule_time: "",
         room: "",
-        semester: "",
-        school_year: "",
       });
       setStudents([]);
       setCurrentTab("basic");
@@ -463,7 +443,7 @@ export default function ClassManagement() {
                         {classItem.class_name}
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        {classItem.schedule_day} {classItem.schedule_time}
+                        {classItem.course_subject} • {classItem.section_block}
                       </p>
                     </div>
                   </div>
@@ -611,31 +591,6 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="schedule_day">Schedule Day</Label>
-                  <Input
-                    id="schedule_day"
-                    value={newClass.schedule_day}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, schedule_day: e.target.value })
-                    }
-                    placeholder="e.g., Monday/Wednesday"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="schedule_time">Schedule Time</Label>
-                  <Input
-                    id="schedule_time"
-                    value={newClass.schedule_time}
-                    onChange={(e) =>
-                      setNewClass({
-                        ...newClass,
-                        schedule_time: e.target.value,
-                      })
-                    }
-                    placeholder="e.g., 10:00 AM - 11:30 AM"
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="room">Room</Label>
                   <Input
                     id="room"
@@ -644,28 +599,6 @@ export default function ClassManagement() {
                       setNewClass({ ...newClass, room: e.target.value })
                     }
                     placeholder="e.g., Room 301"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="semester">Semester</Label>
-                  <Input
-                    id="semester"
-                    value={newClass.semester}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, semester: e.target.value })
-                    }
-                    placeholder="e.g., 1st Semester"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="school_year">School Year</Label>
-                  <Input
-                    id="school_year"
-                    value={newClass.school_year}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, school_year: e.target.value })
-                    }
-                    placeholder="e.g., 2025-2026"
                   />
                 </div>
               </div>
@@ -873,31 +806,6 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit_schedule_day">Schedule Day</Label>
-                  <Input
-                    id="edit_schedule_day"
-                    value={newClass.schedule_day}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, schedule_day: e.target.value })
-                    }
-                    placeholder="e.g., Monday/Wednesday"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit_schedule_time">Schedule Time</Label>
-                  <Input
-                    id="edit_schedule_time"
-                    value={newClass.schedule_time}
-                    onChange={(e) =>
-                      setNewClass({
-                        ...newClass,
-                        schedule_time: e.target.value,
-                      })
-                    }
-                    placeholder="e.g., 10:00 AM - 11:30 AM"
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="edit_room">Room</Label>
                   <Input
                     id="edit_room"
@@ -906,28 +814,6 @@ export default function ClassManagement() {
                       setNewClass({ ...newClass, room: e.target.value })
                     }
                     placeholder="e.g., Room 301"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit_semester">Semester</Label>
-                  <Input
-                    id="edit_semester"
-                    value={newClass.semester}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, semester: e.target.value })
-                    }
-                    placeholder="e.g., 1st Semester"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit_school_year">School Year</Label>
-                  <Input
-                    id="edit_school_year"
-                    value={newClass.school_year}
-                    onChange={(e) =>
-                      setNewClass({ ...newClass, school_year: e.target.value })
-                    }
-                    placeholder="e.g., 2025-2026"
                   />
                 </div>
               </div>
@@ -1057,11 +943,7 @@ export default function ClassManagement() {
                   class_name: "",
                   course_subject: "",
                   section_block: "",
-                  schedule_day: "",
-                  schedule_time: "",
                   room: "",
-                  semester: "",
-                  school_year: "",
                 });
                 setStudents([]);
                 setCurrentTab("basic");
@@ -1259,25 +1141,10 @@ export default function ClassManagement() {
           </DialogHeader>
           {selectedClass && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
-                <div>
-                  <p className="text-sm text-muted-foreground">Schedule</p>
-                  <p className="font-medium">{selectedClass.schedule_day}</p>
-                  <p className="text-sm">{selectedClass.schedule_time}</p>
-                </div>
+              <div className="p-4 bg-muted rounded-lg">
                 <div>
                   <p className="text-sm text-muted-foreground">Room</p>
                   <p className="font-medium">{selectedClass.room || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Semester</p>
-                  <p className="font-medium">{selectedClass.semester || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">School Year</p>
-                  <p className="font-medium">
-                    {selectedClass.school_year || "—"}
-                  </p>
                 </div>
               </div>
 

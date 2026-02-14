@@ -62,11 +62,7 @@ interface Class {
   class_name: string;
   course_subject: string;
   section_block: string;
-  schedule_day: string;
-  schedule_time: string;
   room: string;
-  semester: string;
-  school_year: string;
   students: Student[];
   created_at: string;
 }
@@ -90,11 +86,7 @@ export default function StudentClasses() {
     class_name: '',
     course_subject: '',
     section_block: '',
-    schedule_day: '',
-    schedule_time: '',
     room: '',
-    semester: '',
-    school_year: '',
   });
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -119,11 +111,8 @@ export default function StudentClasses() {
           class_name: 'Computer Science 101',
           course_subject: 'Introduction to Programming',
           section_block: 'A',
-          schedule_day: 'Monday/Wednesday',
-          schedule_time: '10:00 AM - 11:30 AM',
           room: 'Room 301',
-          semester: '1st Semester',
-          school_year: '2025-2026',
+          
           students: [
             { student_id: '2021001', first_name: 'John', last_name: 'Doe', email: 'john.doe@example.com' },
             { student_id: '2021002', first_name: 'Jane', last_name: 'Smith', email: 'jane.smith@example.com' },
@@ -162,11 +151,7 @@ export default function StudentClasses() {
         class_name: '',
         course_subject: '',
         section_block: '',
-        schedule_day: '',
-        schedule_time: '',
         room: '',
-        semester: '',
-        school_year: '',
       });
       setStudents([]);
       setCurrentTab('basic');
@@ -313,7 +298,7 @@ export default function StudentClasses() {
                     <div>
                       <h3 className="font-semibold text-lg text-foreground">{classItem.class_name}</h3>
                       <p className="text-sm text-muted-foreground">
-                        {classItem.schedule_day} {classItem.schedule_time}
+                        {classItem.course_subject} • {classItem.section_block}
                       </p>
                     </div>
                   </div>
@@ -410,24 +395,7 @@ export default function StudentClasses() {
                     placeholder="e.g., A"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="schedule_day">Schedule Day</Label>
-                  <Input
-                    id="schedule_day"
-                    value={newClass.schedule_day}
-                    onChange={(e) => setNewClass({ ...newClass, schedule_day: e.target.value })}
-                    placeholder="e.g., Monday/Wednesday"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="schedule_time">Schedule Time</Label>
-                  <Input
-                    id="schedule_time"
-                    value={newClass.schedule_time}
-                    onChange={(e) => setNewClass({ ...newClass, schedule_time: e.target.value })}
-                    placeholder="e.g., 10:00 AM - 11:30 AM"
-                  />
-                </div>
+                
                 <div className="space-y-2">
                   <Label htmlFor="room">Room</Label>
                   <Input
@@ -437,24 +405,7 @@ export default function StudentClasses() {
                     placeholder="e.g., Room 301"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="semester">Semester</Label>
-                  <Input
-                    id="semester"
-                    value={newClass.semester}
-                    onChange={(e) => setNewClass({ ...newClass, semester: e.target.value })}
-                    placeholder="e.g., 1st Semester"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="school_year">School Year</Label>
-                  <Input
-                    id="school_year"
-                    value={newClass.school_year}
-                    onChange={(e) => setNewClass({ ...newClass, school_year: e.target.value })}
-                    placeholder="e.g., 2025-2026"
-                  />
-                </div>
+                
               </div>
             </TabsContent>
 

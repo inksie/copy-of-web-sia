@@ -25,11 +25,7 @@ export interface Class {
   class_name: string;
   course_subject: string;
   section_block: string;
-  schedule_day: string;
-  schedule_time: string;
   room: string;
-  semester: string;
-  school_year: string;
   students: Student[];
   created_at: string;
   createdBy?: string;
@@ -94,11 +90,7 @@ export async function getClasses(userId?: string): Promise<Class[]> {
         class_name: data.class_name,
         course_subject: data.course_subject,
         section_block: data.section_block,
-        schedule_day: data.schedule_day,
-        schedule_time: data.schedule_time,
         room: data.room,
-        semester: data.semester,
-        school_year: data.school_year,
         students: data.students || [],
         created_at: data.created_at || (data.createdAt?.toDate?.()?.toISOString() || new Date().toISOString()),
         createdBy: data.createdBy,
@@ -137,11 +129,7 @@ export async function getClassById(classId: string): Promise<Class | null> {
         class_name: data.class_name,
         course_subject: data.course_subject,
         section_block: data.section_block,
-        schedule_day: data.schedule_day,
-        schedule_time: data.schedule_time,
         room: data.room,
-        semester: data.semester,
-        school_year: data.school_year,
         students: data.students || [],
         created_at: data.created_at || (data.createdAt?.toDate?.()?.toISOString() || new Date().toISOString()),
         createdBy: data.createdBy,
