@@ -132,6 +132,22 @@ export default function NewExam() {
         student_id_length: Number(formData.student_id_length),
       });
 
+        // Prevent selecting a past date
+        try {
+          const selected = new Date(validated.date + 'T00:00:00');
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (selected < today) {
+            toast.error('Exam date cannot be in the past');
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          toast.error('Invalid date selected');
+          setLoading(false);
+          return;
+        }
+
       // Prepare data for the service
       const examData = {
         name: validated.title,

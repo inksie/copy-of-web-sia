@@ -85,6 +85,20 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
       toast.error('Please select a date');
       return;
     }
+
+    // Prevent selecting a past date
+    try {
+      const selected = new Date(formData.date + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (selected < today) {
+        toast.error('Exam date cannot be in the past');
+        return;
+      }
+    } catch (e) {
+      toast.error('Invalid date selected');
+      return;
+    }
     
     onCreateExam(formData);
     setFormData({
@@ -385,11 +399,37 @@ export function CreateExamModal({ isOpen, onClose, onCreateExam }: CreateExamMod
                   toast.error('Please select a class before continuing');
                   return;
                 }
+
                 // Validate Step 5 (Points) before proceeding
-                if (step === 5 && Object.keys(pointErrors).length > 0) {
-                  toast.error('Please fix point errors before continuing');
-                  return;
+                if (step === 5) {
+                  const choicesCount = formData.choicesPerItem || 4;
+                  const requiredChoices = Array.from({ length: choicesCount }).map((_, idx) =>
+                    String.fromCharCode(65 + idx)
+                  );
+
+                  const missing: string[] = [];
+                  const newErrors = { ...pointErrors };
+
+                  requiredChoices.forEach((choice) => {
+                    const val = formData.choicePoints?.[choice];
+                    if (val === undefined || val === null || val === '') {
+                      missing.push(choice);
+                      newErrors[choice] = 'Points required';
+                    }
+                  });
+
+                  if (missing.length > 0) {
+                    setPointErrors(newErrors);
+                    toast.error(`Please set points for choices: ${missing.join(', ')}`);
+                    return;
+                  }
+
+                  if (Object.keys(pointErrors).length > 0) {
+                    toast.error('Please fix point errors before continuing');
+                    return;
+                  }
                 }
+
                 setStep(step + 1);
               }}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-semibold hover:bg-primary/90 transition-colors"
