@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation'; 
-import Link from 'next/link';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -13,9 +13,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { Plus, Search, FileText, Eye, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+} from "@/components/ui/table";
+import { Plus, Search, FileText, Eye, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,18 +26,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CreateExamModal } from '@/components/modals/CreateExamModal';
-import { useAuth } from '@/contexts/AuthContext';
-import { 
-  createExam, 
-  getExams, 
+import { CreateExamModal } from "@/components/modals/CreateExamModal";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  createExam,
+  getExams,
   deleteExam,
   type Exam,
-  type ExamFormData 
-} from '@/services/examService';
-import { AnswerKeyService } from '@/services/answerKeyService';
+  type ExamFormData,
+} from "@/services/examService";
+import { AnswerKeyService } from "@/services/answerKeyService";
 
-// Extended exam type with answer key status
 interface ExamWithStatus extends Exam {
   answerKeyStatus?: {
     total: number;
@@ -48,25 +47,26 @@ interface ExamWithStatus extends Exam {
 
 export default function Exams() {
   const { user } = useAuth();
-  const searchParams = useSearchParams(); 
+  const searchParams = useSearchParams();
   const [exams, setExams] = useState<ExamWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
-    const title = searchParams.get('title');
-    const subject = searchParams.get('subject');
-    const items = searchParams.get('items');
-    const date = searchParams.get('date');
-    const choices = searchParams.get('choices');
+    const title = searchParams.get("title");
+    const subject = searchParams.get("subject");
+    const items = searchParams.get("items");
+    const date = searchParams.get("date");
+    const choices = searchParams.get("choices");
 
     if (title && subject && items && date) {
-      const examExists = exams.some(exam => 
-        exam.title === title && 
-        exam.subject === subject && 
-        exam.num_items === parseInt(items)
+      const examExists = exams.some(
+        (exam) =>
+          exam.title === title &&
+          exam.subject === subject &&
+          exam.num_items === parseInt(items),
       );
 
       if (!examExists) {
@@ -78,16 +78,16 @@ export default function Exams() {
           choices_per_item: choices ? parseInt(choices) : 4,
           created_at: new Date(date).toISOString(),
           answer_keys: [],
-          generated_sheets: []
+          generated_sheets: [],
         };
 
-        setExams(prev => [newExam, ...prev]);
+        setExams((prev) => [newExam, ...prev]);
         toast.success(`Exam "${title}" added successfully`);
 
-        window.history.replaceState(null, '', '/exams');
+        window.history.replaceState(null, "", "/exams");
       }
     }
-  }, [searchParams, exams]); 
+  }, [searchParams, exams]);
 
   const fetchExams = async () => {
     try {
@@ -98,7 +98,7 @@ export default function Exams() {
       }
 
       const fetchedExams = await getExams(user.id);
-      
+
       // Fetch answer key status for each exam
       const examsWithStatus = await Promise.all(
         fetchedExams.map(async (exam) => {
@@ -111,34 +111,35 @@ export default function Exams() {
                 answerKeyStatus: {
                   total: exam.num_items,
                   completed: answersCount,
-                  hasAnswerKey: true
-                }
+                  hasAnswerKey: true,
+                },
               };
             }
           } catch (error) {
-            console.error(`Error fetching answer key for exam ${exam.id}:`, error);
-            // Log the full error for debugging
+            console.error(
+              `Error fetching answer key for exam ${exam.id}:`,
+              error,
+            );
             if (error instanceof Error) {
-              console.error('Error details:', error.message, error.stack);
+              console.error("Error details:", error.message, error.stack);
             }
           }
-          
-          // No answer key found or error occurred
+
           return {
             ...exam,
             answerKeyStatus: {
               total: exam.num_items,
               completed: 0,
-              hasAnswerKey: false
-            }
+              hasAnswerKey: false,
+            },
           };
-        })
+        }),
       );
-      
+
       setExams(examsWithStatus);
     } catch (error) {
-      console.error('Error fetching exams:', error);
-      toast.error('Failed to load exams');
+      console.error("Error fetching exams:", error);
+      toast.error("Failed to load exams");
     } finally {
       setLoading(false);
     }
@@ -151,48 +152,50 @@ export default function Exams() {
   const handleCreateExam = async (formData: ExamFormData) => {
     try {
       if (!user?.id) {
-        toast.error('You must be logged in to create an exam');
+        toast.error("You must be logged in to create an exam");
         return;
       }
 
-      // Save to Firestore
       const newExam = await createExam(formData, user.id);
 
-      // Update local state
       setExams([newExam, ...exams]);
       toast.success(`Exam "${formData.name}" created successfully`);
       setShowCreateModal(false);
     } catch (error) {
-      console.error('Error creating exam:', error);
-      toast.error('Failed to create exam');
+      console.error("Error creating exam:", error);
+      toast.error("Failed to create exam");
     }
   };
 
   const handleDelete = async () => {
     if (!deleteId) return;
-    
+
     try {
-      // Delete from Firestore
       await deleteExam(deleteId);
-      
-      // Update local state
-      setExams(exams.filter(e => e.id !== deleteId));
-      toast.success('Exam deleted successfully');
+
+      setExams(exams.filter((e) => e.id !== deleteId));
+      toast.success("Exam deleted successfully");
     } catch (error) {
-      console.error('Error deleting exam:', error);
-      toast.error('Failed to delete exam');
+      console.error("Error deleting exam:", error);
+      toast.error("Failed to delete exam");
     } finally {
       setDeleteId(null);
     }
   };
 
-  const filteredExams = exams.filter(exam =>
-    exam.title.toLowerCase().includes(search.toLowerCase()) ||
-    exam.subject.toLowerCase().includes(search.toLowerCase())
+  const filteredExams = exams.filter(
+    (exam) =>
+      exam.title.toLowerCase().includes(search.toLowerCase()) ||
+      exam.subject.toLowerCase().includes(search.toLowerCase()),
   );
 
   const getTotalSheets = (exam: Exam) => {
-    return exam.generated_sheets?.reduce((sum, s) => sum + (s.sheet_count || 0), 0) || 0;
+    return (
+      exam.generated_sheets?.reduce(
+        (sum, s) => sum + (s.sheet_count || 0),
+        0,
+      ) || 0
+    );
   };
 
   return (
@@ -201,7 +204,9 @@ export default function Exams() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Exams</h1>
-          <p className="text-muted-foreground mt-1">Manage your exams and answer keys</p>
+          <p className="text-muted-foreground mt-1">
+            Manage your exams and answer keys
+          </p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -236,9 +241,15 @@ export default function Exams() {
               <TableHead className="hidden sm:table-cell">Subject</TableHead>
               <TableHead className="hidden lg:table-cell">Class</TableHead>
               <TableHead className="text-center">Items</TableHead>
-              <TableHead className="text-center hidden md:table-cell">Choices</TableHead>
-              <TableHead className="text-center hidden sm:table-cell">Answer Key</TableHead>
-              <TableHead className="text-center hidden lg:table-cell">Sheets Generated</TableHead>
+              <TableHead className="text-center hidden md:table-cell">
+                Choices
+              </TableHead>
+              <TableHead className="text-center hidden sm:table-cell">
+                Answer Key
+              </TableHead>
+              <TableHead className="text-center hidden lg:table-cell">
+                Sheets Generated
+              </TableHead>
               <TableHead className="text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -257,11 +268,13 @@ export default function Exams() {
                 <TableCell colSpan={8} className="text-center py-12">
                   <FileText className="w-10 h-10 mx-auto mb-2 text-muted-foreground/50" />
                   <p className="text-muted-foreground">
-                    {search ? 'No exams found matching your search' : 'No exams created yet'}
+                    {search
+                      ? "No exams found matching your search"
+                      : "No exams created yet"}
                   </p>
                   {!search && (
-                    <Button 
-                      variant="link" 
+                    <Button
+                      variant="link"
                       className="mt-2"
                       onClick={() => setShowCreateModal(true)}
                     >
@@ -274,19 +287,29 @@ export default function Exams() {
               filteredExams.map((exam) => (
                 <TableRow key={exam.id} className="hover:bg-table-row-hover">
                   <TableCell className="font-medium">{exam.title}</TableCell>
-                  <TableCell className="text-muted-foreground hidden sm:table-cell">{exam.subject}</TableCell>
-                  <TableCell className="text-muted-foreground hidden lg:table-cell">{exam.className || '—'}</TableCell>
-                  <TableCell className="text-center">{exam.num_items}</TableCell>
-                  <TableCell className="text-center hidden md:table-cell">{exam.choices_per_item}</TableCell>
+                  <TableCell className="text-muted-foreground hidden sm:table-cell">
+                    {exam.subject}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground hidden lg:table-cell">
+                    {exam.className || "—"}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {exam.num_items}
+                  </TableCell>
+                  <TableCell className="text-center hidden md:table-cell">
+                    {exam.choices_per_item}
+                  </TableCell>
                   <TableCell className="text-center hidden sm:table-cell">
                     {exam.answerKeyStatus?.hasAnswerKey ? (
-                      exam.answerKeyStatus.completed === exam.answerKeyStatus.total ? (
+                      exam.answerKeyStatus.completed ===
+                      exam.answerKeyStatus.total ? (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
                           Complete
                         </span>
                       ) : (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning">
-                          {exam.answerKeyStatus.completed}/{exam.answerKeyStatus.total}
+                          {exam.answerKeyStatus.completed}/
+                          {exam.answerKeyStatus.total}
                         </span>
                       )
                     ) : (
@@ -295,7 +318,9 @@ export default function Exams() {
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="text-center hidden lg:table-cell">{getTotalSheets(exam)}</TableCell>
+                  <TableCell className="text-center hidden lg:table-cell">
+                    {getTotalSheets(exam)}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-center gap-1">
                       <Link href={`/exams/${exam.id}`}>
@@ -303,9 +328,9 @@ export default function Exams() {
                           <Eye className="w-4 h-4" />
                         </Button>
                       </Link>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive"
                         onClick={() => setDeleteId(exam.id)}
                       >
@@ -333,12 +358,17 @@ export default function Exams() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Exam</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this exam? This will also delete all associated answer keys and generated sheets. This action cannot be undone.
+              Are you sure you want to delete this exam? This will also delete
+              all associated answer keys and generated sheets. This action
+              cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -347,4 +377,3 @@ export default function Exams() {
     </div>
   );
 }
-

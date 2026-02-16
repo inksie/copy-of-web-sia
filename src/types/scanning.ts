@@ -1,11 +1,17 @@
-// Type definitions for Scanning & Auto-Grading Subsystem
+export type AnswerChoice = string;
 
-export type AnswerChoice = 'A' | 'B' | 'C' | 'D' | 'E';
+export interface QuestionAnswer {
+  questionNumber: number;
+  correctAnswer: AnswerChoice;
+  points: number;
+  choiceLabels?: Record<string, string>;
+}
 
 export interface AnswerKey {
   id: string;
   examId: string;
   answers: AnswerChoice[];
+  questionSettings?: QuestionAnswer[];
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -41,7 +47,7 @@ export interface NullIdAlert {
   scannedResultId: string;
   detectedId: string;
   timestamp: string;
-  status: 'new' | 'resolved' | 'ignored';
+  status: "new" | "resolved" | "ignored";
   resolvedBy?: string;
   resolvedAt?: string;
   resolutionReason?: string;

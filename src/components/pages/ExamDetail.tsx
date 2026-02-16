@@ -1,26 +1,32 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useParams } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
-import { 
-  ArrowLeft, 
-  Loader2, 
-  FileText, 
-  Key, 
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
+import {
+  ArrowLeft,
+  Loader2,
+  FileText,
+  Key,
   Printer,
   CheckCircle,
-  AlertCircle
-} from 'lucide-react';
-import { generateAnswerSheetPDF } from '@/lib/pdfGenerator';
-import { getExamById, type Exam } from '@/services/examService';
+  AlertCircle,
+} from "lucide-react";
+import { generateAnswerSheetPDF } from "@/lib/pdfGenerator";
+import { getExamById, type Exam } from "@/services/examService";
 
 interface AnswerKey {
   id: string;
@@ -32,7 +38,7 @@ export default function ExamDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
-  
+
   const [exam, setExam] = useState<Exam | null>(null);
   const [answerKeys, setAnswerKeys] = useState<AnswerKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,31 +46,29 @@ export default function ExamDetail() {
   const [generating, setGenerating] = useState(false);
   const [sheetCount, setSheetCount] = useState(1);
   const [totalGenerated, setTotalGenerated] = useState(0);
-  
-  // Answer key input state
+
   const [answers, setAnswers] = useState<Record<number, string>>({});
 
   const fetchExamData = async () => {
     if (!id) return;
-    
+
     try {
-      // Fetch exam from Firestore
       const examData = await getExamById(id);
-      
+
       if (!examData) {
-        toast.error('Exam not found');
-        router.push('/exams');
+        toast.error("Exam not found");
+        router.push("/exams");
         return;
       }
-      
+
       setExam(examData);
       setAnswerKeys([]);
       setAnswers({});
       setTotalGenerated(0);
     } catch (error) {
-      console.error('Error fetching exam:', error);
-      toast.error('Failed to load exam');
-      router.push('/exams');
+      console.error("Error fetching exam:", error);
+      toast.error("Failed to load exam");
+      router.push("/exams");
     } finally {
       setLoading(false);
     }
@@ -89,10 +93,10 @@ export default function ExamDetail() {
     setSaving(true);
 
     try {
-      toast.success('Answer keys saved successfully');
+      toast.success("Answer keys saved successfully");
     } catch (error) {
-      console.error('Error saving answer keys:', error);
-      toast.error('Failed to save answer keys');
+      console.error("Error saving answer keys:", error);
+      toast.error("Failed to save answer keys");
     } finally {
       setSaving(false);
     }
@@ -108,8 +112,8 @@ export default function ExamDetail() {
       setTotalGenerated((prev) => prev + sheetCount);
       toast.success(`Generated ${sheetCount} answer sheet(s)`);
     } catch (error) {
-      console.error('Error generating PDF:', error);
-      toast.error('Failed to generate PDF');
+      console.error("Error generating PDF:", error);
+      toast.error("Failed to generate PDF");
     } finally {
       setGenerating(false);
     }
@@ -138,15 +142,15 @@ export default function ExamDetail() {
     <div className="page-container">
       {/* Header */}
       <div className="mb-6">
-        <Button 
-          variant="ghost" 
-          onClick={() => router.push('/exams')}
+        <Button
+          variant="ghost"
+          onClick={() => router.push("/exams")}
           className="mb-4 -ml-2"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Exams
         </Button>
-        
+
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground">{exam.title}</h1>
@@ -181,9 +185,11 @@ export default function ExamDetail() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    isComplete ? 'bg-success/10' : 'bg-warning/10'
-                  }`}>
+                  <div
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      isComplete ? "bg-success/10" : "bg-warning/10"
+                    }`}
+                  >
                     {isComplete ? (
                       <CheckCircle className="w-5 h-5 text-success" />
                     ) : (
@@ -197,8 +203,8 @@ export default function ExamDetail() {
                     </CardDescription>
                   </div>
                 </div>
-                <Button 
-                  onClick={saveAnswerKeys} 
+                <Button
+                  onClick={saveAnswerKeys}
                   disabled={saving}
                   className="gradient-primary"
                 >
@@ -208,30 +214,35 @@ export default function ExamDetail() {
                       Saving...
                     </>
                   ) : (
-                    'Save Answer Key'
+                    "Save Answer Key"
                   )}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-5 sm:grid-cols-10 gap-3">
-                {Array.from({ length: exam.num_items }, (_, i) => i + 1).map((num) => (
-                  <div key={num} className="space-y-1">
-                    <Label className="text-xs text-muted-foreground text-center block">
-                      {num}
-                    </Label>
-                    <Input
-                      value={answers[num] || ''}
-                      onChange={(e) => handleAnswerChange(num, e.target.value)}
-                      className="text-center font-mono uppercase h-10"
-                      maxLength={1}
-                      placeholder="–"
-                    />
-                  </div>
-                ))}
+                {Array.from({ length: exam.num_items }, (_, i) => i + 1).map(
+                  (num) => (
+                    <div key={num} className="space-y-1">
+                      <Label className="text-xs text-muted-foreground text-center block">
+                        {num}
+                      </Label>
+                      <Input
+                        value={answers[num] || ""}
+                        onChange={(e) =>
+                          handleAnswerChange(num, e.target.value)
+                        }
+                        className="text-center font-mono uppercase h-10"
+                        maxLength={1}
+                        placeholder="–"
+                      />
+                    </div>
+                  ),
+                )}
               </div>
               <p className="text-sm text-muted-foreground mt-4">
-                Enter letters A-{String.fromCharCode(64 + exam.choices_per_item)} for each item
+                Enter letters A-
+                {String.fromCharCode(64 + exam.choices_per_item)} for each item
               </p>
             </CardContent>
           </Card>
@@ -263,7 +274,9 @@ export default function ExamDetail() {
                     min={1}
                     max={100}
                     value={sheetCount}
-                    onChange={(e) => setSheetCount(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) =>
+                      setSheetCount(Math.max(1, parseInt(e.target.value) || 1))
+                    }
                   />
                   <p className="text-xs text-muted-foreground">
                     Each copy will be on a separate page
@@ -286,12 +299,15 @@ export default function ExamDetail() {
                 <ul className="text-sm text-muted-foreground space-y-1">
                   <li>• Student ID: {exam.student_id_length} digit bubbles</li>
                   <li>• Questions: {exam.num_items} items</li>
-                  <li>• Choices per item: {exam.choices_per_item} (A-{String.fromCharCode(64 + exam.choices_per_item)})</li>
+                  <li>
+                    • Choices per item: {exam.choices_per_item} (A-
+                    {String.fromCharCode(64 + exam.choices_per_item)})
+                  </li>
                 </ul>
               </div>
 
-              <Button 
-                onClick={generatePDF} 
+              <Button
+                onClick={generatePDF}
                 disabled={generating}
                 className="w-full gradient-accent text-accent-foreground"
                 size="lg"
