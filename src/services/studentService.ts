@@ -18,6 +18,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { StudentIDValidationService } from './studentIDValidationService';
 
 export interface StudentRecord {
   student_id: string; // PRIMARY KEY
@@ -57,7 +58,7 @@ const EXAM_RESULTS_COLLECTION = 'studentExamResults';
 export class StudentService {
   /**
    * Create a new student record with Student ID as primary key
-   * @throws Error if student ID already exists
+   * @throws Error if student ID already exists or fails validation
    */
   static async createStudent(
     student_id: string,
@@ -66,14 +67,21 @@ export class StudentService {
     email: string | undefined,
     created_by: string
   ): Promise<StudentRecord> {
-    if (!student_id || !student_id.trim()) {
-      throw new Error('Student ID is required and cannot be empty');
+    // Validate student record
+    const recordValidation = await StudentIDValidationService.validateStudentRecord(
+      student_id,
+      first_name,
+      last_name
+    );
+
+    if (!recordValidation.isValid) {
+      throw new Error(`Validation failed: ${recordValidation.errors.join('; ')}`);
     }
 
-    // Check for duplicate student ID
-    const existingStudent = await this.getStudentById(student_id);
-    if (existingStudent) {
-      throw new Error(`Student ID "${student_id}" already exists. Student IDs must be unique.`);
+    // Validate student ID specifically
+    const idValidation = await StudentIDValidationService.validateStudentId(student_id);
+    if (!idValidation.isValid) {
+      throw new Error(idValidation.error || 'Invalid student ID');
     }
 
     const now = new Date().toISOString();
