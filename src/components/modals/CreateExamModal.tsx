@@ -6,6 +6,8 @@ import { X, Loader2 } from "lucide-react";
 import { getClasses, type Class } from "@/services/classService";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { AddNewClassModal } from "./AddNewClassModal";
+import { Button } from "@/components/ui/button";
 
 interface CreateExamModalProps {
   isOpen: boolean;
@@ -46,6 +48,7 @@ export function CreateExamModal({
   const [classes, setClasses] = useState<Class[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [pointErrors, setPointErrors] = useState<{ [key: string]: string }>({});
+  const [showAddClassModal, setShowAddClassModal] = useState(false);
 
   useEffect(() => {
     const fetchClassesData = async () => {
@@ -223,11 +226,17 @@ export function CreateExamModal({
                   </span>
                 </div>
               ) : classes.length === 0 ? (
-                <div className="text-center py-6 text-muted-foreground">
-                  <p>
-                    No classes available. Please create a class first in the
-                    Classes page.
+                <div className="text-center py-8 space-y-4">
+                  <p className="text-muted-foreground">
+                    No classes available yet
                   </p>
+                  <Button
+                    type="button"
+                    onClick={() => setShowAddClassModal(true)}
+                    variant="default"
+                  >
+                    Create a New Class
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -486,6 +495,17 @@ export function CreateExamModal({
           </button>
         </div>
       </Card>
+
+      {/* Add New Class Modal */}
+      <AddNewClassModal
+        isOpen={showAddClassModal}
+        onClose={() => setShowAddClassModal(false)}
+        onClassCreated={(newClass) => {
+          setClasses([...classes, newClass]);
+          setShowAddClassModal(false);
+          toast.success(`Class "${newClass.class_name}" created successfully!`);
+        }}
+      />
     </div>
   );
 }

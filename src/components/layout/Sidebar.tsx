@@ -50,14 +50,14 @@ export function Sidebar() {
   return (
     <>
       {/* Mobile Header Bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-sidebar border-b z-50 flex items-center px-4">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-12 bg-sidebar border-b z-50 flex items-center px-3">
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className="p-2 hover:bg-muted rounded-md"
+          className="p-1.5 hover:bg-muted rounded-md"
         >
-          {mobileOpen ? <X className="w-5 h-5 text-sidebar-foreground" /> : <Menu className="w-5 h-5 text-sidebar-foreground" />}
+          {mobileOpen ? <X className="w-4 h-4 text-sidebar-foreground" /> : <Menu className="w-4 h-4 text-sidebar-foreground" />}
         </button>
-        <h1 className="ml-3 font-bold text-sidebar-foreground">SIA</h1>
+        <h1 className="ml-2 font-bold text-sidebar-foreground text-sm">SIA</h1>
       </div>
 
       {/* Mobile Overlay */}
@@ -78,17 +78,17 @@ export function Sidebar() {
         )}
       >
         {/* Header */}
-        <div className="p-4 border-b border-sidebar-border">
+        <div className="p-3 border-b border-sidebar-border">
           {!collapsed && (
             <div className="overflow-hidden">
-              <h1 className="font-bold text-sidebar-foreground">SIA</h1>
+              <h1 className="font-bold text-sidebar-foreground text-sm">SIA</h1>
               <p className="text-xs text-sidebar-foreground/60 truncate">Exam & Quiz Builder</p>
             </div>
           )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-2 space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.path || 
@@ -111,10 +111,10 @@ export function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="p-3 border-t border-sidebar-border">
+        <div className="p-2 border-t border-sidebar-border">
           {!collapsed && user && (
-            <div className="px-3 py-2 mb-2">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">
+            <div className="px-2 py-1.5 mb-1">
+              <p className="text-xs font-medium text-sidebar-foreground truncate">
                 {user.email}
               </p>
             </div>
@@ -123,8 +123,8 @@ export function Sidebar() {
             onClick={handleSignOut}
             className="sidebar-item w-full text-left hover:bg-destructive/10 hover:text-destructive"
           >
-            <LogOut className="w-5 h-5 flex-shrink-0" />
-            {!collapsed && <span>Sign out</span>}
+            <LogOut className="w-4 h-4 flex-shrink-0" />
+            {!collapsed && <span className="text-sm">Sign out</span>}
           </button>
         </div>
 
@@ -132,13 +132,13 @@ export function Sidebar() {
         <Button
           variant="ghost"
           size="icon"
-          className="absolute -right-3 top-20 w-6 h-6 rounded-full border bg-card shadow-sm hover:bg-secondary"
+          className="absolute -right-2.5 top-16 w-5 h-5 rounded-full border bg-card shadow-sm hover:bg-secondary p-0"
           onClick={() => setCollapsed(!collapsed)}
         >
           {collapsed ? (
-            <ChevronRight className="w-3 h-3" />
+            <ChevronRight className="w-2.5 h-2.5" />
           ) : (
-            <ChevronLeft className="w-3 h-3" />
+            <ChevronLeft className="w-2.5 h-2.5" />
           )}
         </Button>
       </aside>
@@ -146,7 +146,7 @@ export function Sidebar() {
       {/* Mobile Sidebar Drawer */}
       <aside 
         className={cn(
-          "md:hidden h-screen bg-sidebar flex flex-col fixed left-0 top-14 z-40 border-r w-64 transition-transform duration-300",
+          "md:hidden h-screen bg-sidebar flex flex-col fixed left-0 top-12 z-40 border-r w-56 transition-transform duration-300",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >

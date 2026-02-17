@@ -48,54 +48,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [session, setSession] = useState<AppSession | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start as false for faster initial load
   const [userRole, setUserRole] = useState<AppRole | null>(null);
 
   // Listen to Firebase auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // User is signed in
-        setFirebaseUser(firebaseUser);
-        
-        // Fetch user data from Firestore
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        const userData = userDoc.data();
+      try {
+        if (firebaseUser) {
+          // User is signed in
+          setFirebaseUser(firebaseUser);
+          
+          // Fetch user data from Firestore with error handling
+          try {
+            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+            const userData = userDoc.data();
 
-        const appUser: AppUser = {
-          id: firebaseUser.uid,
-          email: firebaseUser.email || '',
-          created_at: userData?.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
-          updated_at: userData?.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
-          user_metadata: {
-            full_name: firebaseUser.displayName || userData?.fullName || '',
-          },
-          displayName: firebaseUser.displayName || userData?.fullName || '',
-          role: 'instructor',
-        };
+            const appUser: AppUser = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              created_at: userData?.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
+              updated_at: userData?.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+              user_metadata: {
+                full_name: firebaseUser.displayName || userData?.fullName || '',
+              },
+              displayName: firebaseUser.displayName || userData?.fullName || '',
+              role: 'instructor',
+            };
 
-        setUser(appUser);
-        setUserRole('instructor');
+            setUser(appUser);
+            setUserRole('instructor');
 
-        // Get ID token for session
-        const token = await firebaseUser.getIdToken();
+            // Get ID token for session
+            const token = await firebaseUser.getIdToken();
 
-        const appSession: AppSession = {
-          access_token: token,
-          expires_in: 3600,
-          token_type: 'bearer',
-          user: appUser,
-        };
+            const appSession: AppSession = {
+              access_token: token,
+              expires_in: 3600,
+              token_type: 'bearer',
+              user: appUser,
+            };
 
-        setSession(appSession);
-      } else {
-        // User is signed out
-        setFirebaseUser(null);
-        setUser(null);
-        setSession(null);
-        setUserRole(null);
+            setSession(appSession);
+          } catch (firestoreError: any) {
+            // Handle offline or permission errors gracefully
+            console.warn('Firestore error:', firestoreError?.message);
+            
+            // Still set user with basic Firebase data if Firestore fails
+            const appUser: AppUser = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              user_metadata: {
+                full_name: firebaseUser.displayName || '',
+              },
+              displayName: firebaseUser.displayName || '',
+              role: 'instructor',
+            };
+
+            setUser(appUser);
+            setUserRole('instructor');
+
+            const token = await firebaseUser.getIdToken();
+            const appSession: AppSession = {
+              access_token: token,
+              expires_in: 3600,
+              token_type: 'bearer',
+              user: appUser,
+            };
+
+            setSession(appSession);
+          }
+        } else {
+          // User is signed out
+          setFirebaseUser(null);
+          setUser(null);
+          setSession(null);
+          setUserRole(null);
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -104,6 +138,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Sign up with Firebase
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
+      // Validate inputs
+      if (!email.trim()) {
+        return { error: new Error('Email is required') };
+      }
+
+      if (!password || password.length < 6) {
+        return { error: new Error('Password must be at least 6 characters') };
+      }
+
+      if (!fullName.trim()) {
+        return { error: new Error('Full name is required') };
+      }
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return { error: new Error('Please enter a valid email address') };
+      }
+
       // Create user in Firebase Auth
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
@@ -114,29 +165,94 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Create user document in Firestore
-      await setDoc(doc(db, 'users', firebaseUser.uid), {
-        email: email,
-        fullName: fullName,
-        role: 'instructor', // All users are instructors
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid), {
+          email: email,
+          fullName: fullName,
+          role: 'instructor', // All users are instructors
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (firestoreError: any) {
+        console.warn('Could not save user to Firestore:', firestoreError?.message);
+        // Continue even if Firestore write fails - user is created in Auth
+      }
 
       return { error: null };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Sign up error:', error);
-      return { error: error as Error };
+
+      // Map Firebase error codes to user-friendly messages
+      let userMessage = 'Failed to create account. Please try again.';
+
+      if (error.code === 'auth/email-already-in-use') {
+        userMessage = 'An account with this email already exists';
+      } else if (error.code === 'auth/invalid-email') {
+        userMessage = 'Invalid email address';
+      } else if (error.code === 'auth/weak-password') {
+        userMessage = 'Password is too weak. Please use a stronger password.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        userMessage = 'Account creation is currently disabled';
+      } else if (error.message) {
+        userMessage = error.message;
+      }
+
+      return { error: new Error(userMessage) };
     }
   };
 
   // Sign in with Firebase
   const signIn = async (email: string, password: string) => {
     try {
+      // Validate inputs
+      if (!email.trim()) {
+        const error = new Error('Email is required');
+        return { error };
+      }
+
+      if (!password) {
+        const error = new Error('Password is required');
+        return { error };
+      }
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        const error = new Error('Please enter a valid email address');
+        return { error };
+      }
+
       await signInWithEmailAndPassword(auth, email, password);
       return { error: null };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Sign in error:', error);
-      return { error: error as Error };
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+
+      // Map Firebase error codes to user-friendly messages
+      let userMessage = 'Failed to sign in. Please check your credentials.';
+
+      if (error.code === 'auth/user-not-found') {
+        userMessage = 'No account found with this email address. Please sign up first.';
+      } else if (error.code === 'auth/wrong-password') {
+        userMessage = 'Incorrect password. Please try again.';
+      } else if (error.code === 'auth/invalid-email') {
+        userMessage = 'Invalid email address';
+      } else if (error.code === 'auth/invalid-credential') {
+        userMessage = 'Invalid email or password. Please check and try again.';
+      } else if (error.code === 'auth/user-disabled') {
+        userMessage = 'This account has been disabled';
+      } else if (error.code === 'auth/too-many-requests') {
+        userMessage = 'Too many failed login attempts. Please try again later.';
+      } else if (error.code === 'auth/network-request-failed') {
+        userMessage = 'Network error. Please check your internet connection.';
+      } else if (error.code === 'auth/internal-error') {
+        userMessage = 'Firebase authentication error. Please check your Firebase configuration.';
+      } else if (error.message?.includes('PERMISSION_DENIED')) {
+        userMessage = 'Firebase authentication is not properly configured. Contact administrator.';
+      } else if (error.message) {
+        userMessage = error.message;
+      }
+
+      return { error: new Error(userMessage) };
     }
   };
 

@@ -35,26 +35,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
     const { error } = await signIn(email, password);
     
     if (error) {
-      // Convert Firebase errors to user-friendly messages
-      let errorMessage = error.message;
-      
-      if (error.message.includes('auth/user-not-found')) {
-        errorMessage = 'No account found with this email address.';
-      } else if (error.message.includes('auth/wrong-password')) {
-        errorMessage = 'Incorrect password. Please try again.';
-      } else if (error.message.includes('auth/invalid-email')) {
-        errorMessage = 'Invalid email address.';
-      } else if (error.message.includes('auth/user-disabled')) {
-        errorMessage = 'This account has been disabled.';
-      } else if (error.message.includes('auth/too-many-requests')) {
-        errorMessage = 'Too many failed attempts. Please try again later.';
-      } else if (error.message.includes('auth/network-request-failed')) {
-        errorMessage = 'Network error. Please check your connection.';
-      } else if (error.message.includes('auth/invalid-credential')) {
-        errorMessage = 'Invalid email or password.';
-      }
-      
-      setError(errorMessage);
+      setError(error.message);
       setLoading(false);
     }
     // Don't redirect here - let useEffect handle it when user state updates

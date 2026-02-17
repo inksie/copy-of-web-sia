@@ -37,29 +37,10 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
     setLoading(true);
     setError(null);
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      setLoading(false);
-      return;
-    }
-
     const { error } = await signUp(email, password, fullName);
     
     if (error) {
-      // Convert Firebase errors to user-friendly messages
-      let errorMessage = error.message;
-      
-      if (error.message.includes('auth/email-already-in-use')) {
-        errorMessage = 'An account with this email already exists.';
-      } else if (error.message.includes('auth/invalid-email')) {
-        errorMessage = 'Invalid email address.';
-      } else if (error.message.includes('auth/weak-password')) {
-        errorMessage = 'Password is too weak. Use at least 6 characters.';
-      } else if (error.message.includes('auth/network-request-failed')) {
-        errorMessage = 'Network error. Please check your connection.';
-      }
-      
-      setError(errorMessage);
+      setError(error.message);
       setLoading(false);
     } else {
       setSuccess(true);

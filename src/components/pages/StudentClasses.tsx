@@ -183,6 +183,18 @@ export default function StudentClasses() {
       return;
     }
 
+    // Check for duplicate student ID
+    if (students.some(s => s.student_id === newStudent.student_id)) {
+      toast.error(`Student ID "${newStudent.student_id}" already exists in this class`);
+      return;
+    }
+
+    // Check for duplicate student name (first name + last name combination)
+    if (students.some(s => s.first_name === newStudent.first_name && s.last_name === newStudent.last_name)) {
+      toast.error(`Student "${newStudent.first_name} ${newStudent.last_name}" already exists in this class`);
+      return;
+    }
+
     const student: Student = {
       student_id: newStudent.student_id,
       first_name: newStudent.first_name,
@@ -474,8 +486,8 @@ export default function StudentClasses() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {students.map((student) => (
-                        <TableRow key={student.student_id}>
+                      {students.map((student, idx) => (
+                        <TableRow key={`new-student-${idx}`}>
                           <TableCell>{student.student_id}</TableCell>
                           <TableCell>{`${student.first_name} ${student.last_name}`}</TableCell>
                           <TableCell>{student.email || '—'}</TableCell>
@@ -594,7 +606,7 @@ export default function StudentClasses() {
                   </TableHeader>
                   <TableBody>
                     {importPreview.map((student, idx) => (
-                      <TableRow key={idx}>
+                      <TableRow key={`import-${idx}`}>
                         <TableCell>{student.student_id}</TableCell>
                         <TableCell>{`${student.first_name} ${student.last_name}`}</TableCell>
                         <TableCell>{student.email || '—'}</TableCell>
@@ -680,8 +692,8 @@ export default function StudentClasses() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedClass.students.map((student) => (
-                          <TableRow key={student.student_id}>
+                        {selectedClass.students.map((student, idx) => (
+                          <TableRow key={`${selectedClass.id}-student-${idx}`}>
                             <TableCell>{student.student_id}</TableCell>
                             <TableCell>{`${student.first_name} ${student.last_name}`}</TableCell>
                             <TableCell>{student.email || '—'}</TableCell>
