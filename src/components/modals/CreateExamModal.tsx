@@ -443,7 +443,7 @@ export function CreateExamModal({
 
                   requiredChoices.forEach((choice) => {
                     const val = formData.choicePoints?.[choice];
-                    if (val === undefined || val === null || val === "") {
+                    if (val === undefined || val === null) {
                       missing.push(choice);
                       newErrors[choice] = "Points required";
                     }
