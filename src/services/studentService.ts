@@ -9,13 +9,11 @@ import {
   setDoc,
   getDoc,
   updateDoc,
-  deleteDoc,
   query,
   where,
   getDocs,
   serverTimestamp,
   writeBatch,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { StudentIDValidationService } from './studentIDValidationService';

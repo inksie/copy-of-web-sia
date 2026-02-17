@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -19,6 +20,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -35,11 +45,23 @@ export function Sidebar() {
   const router = useRouter();
   const { signOut, user } = useAuth();
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen } = useSidebarContext();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
-  const handleSignOut = () => {
-    signOut();
-    setMobileOpen(false);
-    router.push('/');
+  const handleSignOutConfirm = async () => {
+    setIsSigningOut(true);
+    try {
+      // Give any pending saves a moment to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await signOut();
+      setMobileOpen(false);
+      setShowLogoutConfirm(false);
+      router.push('/');
+    } catch (error) {
+      console.error('Sign out error:', error);
+    } finally {
+      setIsSigningOut(false);
+    }
   };
 
   const handleNavClick = () => {
@@ -127,7 +149,7 @@ export function Sidebar() {
           )}
           <div className="flex justify-center">
             <button
-              onClick={handleSignOut}
+              onClick={() => setShowLogoutConfirm(true)}
               className="sidebar-item w-full justify-center text-left text-white/80 hover:text-white hover:bg-[#4F7A6B] transition-colors"
             >
               <LogOut className="w-4 h-4 flex-shrink-0" />
@@ -193,7 +215,7 @@ export function Sidebar() {
           )}
           <div className="flex justify-center">
             <button
-              onClick={handleSignOut}
+              onClick={() => setShowLogoutConfirm(true)}
               className="sidebar-item w-full justify-center text-left text-white/80 hover:text-white hover:bg-[#2F4A35] transition-colors"
             >
               <LogOut className="w-5 h-5 flex-shrink-0" />
@@ -202,6 +224,28 @@ export function Sidebar() {
           </div>
         </div>
       </aside>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign out?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to sign out? You'll need to log in again to access your account.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex gap-3 justify-end">
+            <AlertDialogCancel disabled={isSigningOut}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleSignOutConfirm} 
+              disabled={isSigningOut}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSigningOut ? 'Signing out...' : 'Sign out'}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

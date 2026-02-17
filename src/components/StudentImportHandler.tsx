@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, CheckCircle, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { StudentIDValidationService, ImportValidationResult } from '@/services/studentIDValidationService';
+import { StudentIDValidationService } from '@/services/studentIDValidationService';
 import { StudentService } from '@/services/studentService';
 import { StudentIDBatchValidator } from './StudentIDValidator';
 

@@ -38,6 +38,8 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       setError(error.message);
       setLoading(false);
     }
+    // If no error, the onAuthStateChanged listener will handle the redirect
+    // Don't set loading to false - let the useEffect handle it when user updates
   };
 
   return (
