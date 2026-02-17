@@ -56,69 +56,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         if (firebaseUser) {
-          // User is signed in
+          // User is signed in - set basic user info immediately
           setFirebaseUser(firebaseUser);
           
-          // Fetch user data from Firestore with error handling
+          // Create basic app user from Firebase data immediately
+          const basicAppUser: AppUser = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            user_metadata: {
+              full_name: firebaseUser.displayName || '',
+            },
+            displayName: firebaseUser.displayName || '',
+            role: 'instructor',
+          };
+          
+          setUser(basicAppUser);
+          setUserRole('instructor');
+          
+          const token = await firebaseUser.getIdToken();
+          const appSession: AppSession = {
+            access_token: token,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: basicAppUser,
+          };
+          setSession(appSession);
+          
+          // Then fetch additional data from Firestore in background (non-blocking)
+          // Wrap in try-catch to silently handle offline/permission errors
           try {
-            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            const userData = userDoc.data();
-
-            const appUser: AppUser = {
-              id: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              created_at: userData?.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
-              updated_at: userData?.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
-              user_metadata: {
-                full_name: firebaseUser.displayName || userData?.fullName || '',
-              },
-              displayName: firebaseUser.displayName || userData?.fullName || '',
-              role: 'instructor',
-            };
-
-            setUser(appUser);
-            setUserRole('instructor');
-
-            // Get ID token for session
-            const token = await firebaseUser.getIdToken();
-
-            const appSession: AppSession = {
-              access_token: token,
-              expires_in: 3600,
-              token_type: 'bearer',
-              user: appUser,
-            };
-
-            setSession(appSession);
-          } catch (firestoreError: any) {
-            // Handle offline or permission errors gracefully
-            console.warn('Firestore error:', firestoreError?.message);
-            
-            // Still set user with basic Firebase data if Firestore fails
-            const appUser: AppUser = {
-              id: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              user_metadata: {
-                full_name: firebaseUser.displayName || '',
-              },
-              displayName: firebaseUser.displayName || '',
-              role: 'instructor',
-            };
-
-            setUser(appUser);
-            setUserRole('instructor');
-
-            const token = await firebaseUser.getIdToken();
-            const appSession: AppSession = {
-              access_token: token,
-              expires_in: 3600,
-              token_type: 'bearer',
-              user: appUser,
-            };
-
-            setSession(appSession);
+            getDoc(doc(db, 'users', firebaseUser.uid))
+              .then((userDoc) => {
+                const userData = userDoc.data();
+                if (userData) {
+                  setUser((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          created_at: userData?.createdAt?.toDate?.().toISOString() || prev.created_at,
+                          updated_at: userData?.updatedAt?.toDate?.().toISOString() || prev.updated_at,
+                          user_metadata: {
+                            full_name: userData?.fullName || prev.displayName || '',
+                          },
+                          displayName: userData?.fullName || prev.displayName || '',
+                        }
+                      : prev
+                  );
+                }
+              })
+              .catch(() => {
+                // Silently fail - user is already logged in with basic Firebase data
+              });
+          } catch {
+            // Ignore errors - not critical
           }
         } else {
           // User is signed out

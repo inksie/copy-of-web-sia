@@ -122,18 +122,22 @@ export default function ClassManagement() {
       return;
     }
 
-    try {
-      setSaving(true);
+    // Show saving state
+    setSaving(true);
 
+    try {
+      // Save the class data before resetting
       const classToAdd: Omit<Class, "id"> = {
         ...newClass,
         students: students,
         created_at: new Date().toISOString(),
       };
 
+      // WAIT for Firestore save to complete before closing dialog
       const newClassDoc = await createClass(classToAdd, user.id);
+      
+      // Add to UI after successful save
       setClasses([newClassDoc, ...classes]);
-
       setShowAddDialog(false);
       setNewClass({
         class_name: "",
@@ -144,10 +148,10 @@ export default function ClassManagement() {
       setStudents([]);
       setCurrentTab("basic");
 
-      toast.success("Class added successfully");
+      toast.success("Class saved successfully");
     } catch (error) {
-      console.error("Error adding class:", error);
-      toast.error("Failed to add class");
+      console.error("Error saving class to Firebase:", error);
+      toast.error("Failed to save class. Please try again or check your connection.");
     } finally {
       setSaving(false);
     }
@@ -589,8 +593,8 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="section_block">Section/Block *</Label>
-                  <Input
+                  <Label htmlFor="section_block">Block *</Label>
+                  <select
                     id="section_block"
                     value={newClass.section_block}
                     onChange={(e) =>
@@ -599,8 +603,17 @@ export default function ClassManagement() {
                         section_block: e.target.value,
                       })
                     }
-                    placeholder="e.g., A"
-                  />
+                    className="w-full px-3 py-2 border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select a block...</option>
+                    {Array.from({ length: 26 }, (_, i) =>
+                      String.fromCharCode(65 + i)
+                    ).map((letter) => (
+                      <option key={letter} value={letter}>
+                        {letter}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="room">Room</Label>
@@ -804,8 +817,8 @@ export default function ClassManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit_section_block">Section/Block *</Label>
-                  <Input
+                  <Label htmlFor="edit_section_block">Block *</Label>
+                  <select
                     id="edit_section_block"
                     value={newClass.section_block}
                     onChange={(e) =>
@@ -814,8 +827,17 @@ export default function ClassManagement() {
                         section_block: e.target.value,
                       })
                     }
-                    placeholder="e.g., A"
-                  />
+                    className="w-full px-3 py-2 border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select a block...</option>
+                    {Array.from({ length: 26 }, (_, i) =>
+                      String.fromCharCode(65 + i)
+                    ).map((letter) => (
+                      <option key={letter} value={letter}>
+                        {letter}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit_room">Room</Label>

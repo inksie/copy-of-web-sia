@@ -39,6 +39,8 @@ const CLASSES_COLLECTION = 'classes';
  */
 export async function createClass(classData: Omit<Class, 'id'>, userId: string): Promise<Class> {
   try {
+    console.log('Creating class with data:', classData, 'for user:', userId);
+    
     const newClassData = {
       ...classData,
       createdBy: userId,
@@ -46,7 +48,9 @@ export async function createClass(classData: Omit<Class, 'id'>, userId: string):
       updatedAt: serverTimestamp(),
     };
 
+    console.log('Sending to Firestore:', newClassData);
     const docRef = await addDoc(collection(db, CLASSES_COLLECTION), newClassData);
+    console.log('Class created successfully with ID:', docRef.id);
     
     // Return the class with the generated ID
     const newClass: Class = {
@@ -59,6 +63,8 @@ export async function createClass(classData: Omit<Class, 'id'>, userId: string):
     return newClass;
   } catch (error) {
     console.error('Error creating class:', error);
+    console.error('Error code:', (error as any).code);
+    console.error('Error message:', (error as any).message);
     throw error;
   }
 }

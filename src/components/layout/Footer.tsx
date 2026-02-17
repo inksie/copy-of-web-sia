@@ -8,7 +8,6 @@
 
 import Link from 'next/link';
 import { Mail, Phone, MapPin, Github, Linkedin, Twitter } from 'lucide-react';
-import { Separator } from '@/components/ui/separator';
 
 interface FooterLink {
   label: string;
@@ -169,7 +168,7 @@ export function Footer() {
           </div>
         </div>
 
-        <Separator className="my-8 bg-sidebar-border" />
+        <div className="my-8 border-t border-sidebar-border" />
 
         {/* Links Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
@@ -205,7 +204,7 @@ export function Footer() {
           ))}
         </div>
 
-        <Separator className="my-8 bg-sidebar-border" />
+        <div className="my-8 border-t border-sidebar-border" />
 
         {/* Bottom Bar */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -338,7 +337,7 @@ export function DashboardFooter() {
           </div>
         </div>
 
-        <Separator className="my-4" />
+        <div className="my-4 border-t border-sidebar-border" />
 
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">

@@ -1,12 +1,11 @@
 'use client';
 
-import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function PrivacyPolicyPage() {
   return (
-    <MainLayout>
-      <div className="space-y-6">
+    <div className="min-h-screen bg-background p-4 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Privacy Policy</h1>
           <p className="text-muted-foreground mt-2">
@@ -68,6 +67,6 @@ export default function PrivacyPolicyPage() {
           </Card>
         </div>
       </div>
-    </MainLayout>
+    </div>
   );
 }

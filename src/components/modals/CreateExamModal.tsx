@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 interface CreateExamModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateExam: (data: ExamFormData) => void;
+  onCreateExam: (data: ExamFormData) => Promise<void>;
 }
 
 interface ExamFormData {
@@ -49,6 +49,7 @@ export function CreateExamModal({
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [pointErrors, setPointErrors] = useState<{ [key: string]: string }>({});
   const [showAddClassModal, setShowAddClassModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchClassesData = async () => {
@@ -80,7 +81,7 @@ export function CreateExamModal({
     }));
   };
 
-  const handleCreateExam = () => {
+  const handleCreateExam = async () => {
     if (!formData.name.trim()) {
       toast.error("Please enter an exam name");
       return;
@@ -107,21 +108,32 @@ export function CreateExamModal({
       return;
     }
 
-    onCreateExam(formData);
-    setFormData({
-      name: "",
-      totalQuestions: 50,
-      date: new Date().toISOString().split("T")[0],
-      folder: "General",
-      className: "",
-      classId: undefined,
-      choicesPerItem: 4,
-      examType: "board",
-      choicePoints: {},
-    });
-    setPointErrors({});
-    setStep(1);
-    onClose();
+    setIsSubmitting(true);
+
+    try {
+      // AWAIT the exam creation to complete before closing
+      await onCreateExam(formData);
+      
+      setFormData({
+        name: "",
+        totalQuestions: 50,
+        date: new Date().toISOString().split("T")[0],
+        folder: "General",
+        className: "",
+        classId: undefined,
+        choicesPerItem: 4,
+        examType: "board",
+        choicePoints: {},
+      });
+      setPointErrors({});
+      setStep(1);
+      onClose();
+    } catch (error) {
+      console.error("Error creating exam:", error);
+      toast.error("Failed to create exam");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -482,9 +494,10 @@ export function CreateExamModal({
           ) : (
             <button
               onClick={handleCreateExam}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-semibold hover:bg-primary/90 transition-colors"
+              disabled={isSubmitting}
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create Exam
+              {isSubmitting ? "Creating..." : "Create Exam"}
             </button>
           )}
           <button
