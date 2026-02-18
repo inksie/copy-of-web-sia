@@ -154,6 +154,15 @@ export function StudentImportHandler({
         const record = recordsToImport[i];
 
         try {
+          // Double-check for duplicates before importing
+          const existingStudent = await StudentService.getStudentById(record.student_id);
+          if (existingStudent) {
+            errors.push(
+              `${record.student_id}: Already exists - ${existingStudent.first_name} ${existingStudent.last_name} (created: ${new Date(existingStudent.created_at).toLocaleDateString()})`
+            );
+            continue;
+          }
+
           // Validate again before importing
           const finalValidation = await StudentIDValidationService.validateStudentRecord(
             record.student_id,
