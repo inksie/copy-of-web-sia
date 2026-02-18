@@ -77,6 +77,25 @@ export class StudentService {
       throw new Error(idValidation.error || 'Invalid student ID');
     }
 
+    // Check if student already exists (prevent duplicates)
+    try {
+      const existingStudent = await this.getStudentById(student_id);
+      if (existingStudent) {
+        throw new Error(
+          `Student ID "${student_id}" already exists in the system. ` +
+          `Existing student: ${existingStudent.first_name} ${existingStudent.last_name} ` +
+          `(created: ${new Date(existingStudent.created_at).toLocaleDateString()})`
+        );
+      }
+    } catch (error) {
+      // Re-throw if it's our custom duplicate error
+      if ((error as Error).message.includes('already exists')) {
+        throw error;
+      }
+      // Log other errors but continue
+      console.error('Error checking for existing student:', error);
+    }
+
     const now = new Date().toISOString();
     const studentRecord: StudentRecord = {
       student_id,

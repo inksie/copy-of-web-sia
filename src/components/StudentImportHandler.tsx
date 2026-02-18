@@ -14,6 +14,8 @@ import { AlertCircle, CheckCircle, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { StudentIDValidationService } from '@/services/studentIDValidationService';
 import { StudentService } from '@/services/studentService';
+import { DuplicateDetectionService } from '@/services/duplicateDetectionService';
+import { DuplicateReviewDialog } from './modals/DuplicateReviewDialog';
 import { StudentIDBatchValidator } from './StudentIDValidator';
 
 interface StudentImportHandlerProps {
@@ -30,6 +32,9 @@ export function StudentImportHandler({
   const [validationResult, setValidationResult] = useState<any>(null);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
+  const [duplicateDetectionResult, setDuplicateDetectionResult] = useState<any>(null);
+  const [showDuplicateReview, setShowDuplicateReview] = useState(false);
+  const [skippedRecords, setSkippedRecords] = useState<Set<string>>(new Set());
 
   /**
    * Parse Excel/CSV file
@@ -76,12 +81,57 @@ export function StudentImportHandler({
   /**
    * Handle validation completion
    */
-  const handleValidationComplete = (result: any) => {
+  const handleValidationComplete = async (result: any) => {
+    console.log('[StudentImportHandler] Validation complete:', result);
     setValidationResult(result);
+    
+    // After validation passes, check for duplicates
+    if (result.isValid) {
+      try {
+        console.log('[StudentImportHandler] Starting duplicate detection for', result.validRecords.length, 'records');
+        const duplicateResult = await DuplicateDetectionService.detectDuplicates(
+          result.validRecords
+        );
+
+        console.log('[StudentImportHandler] Duplicate detection result:', {
+          hasDuplicates: duplicateResult.hasDuplicates,
+          totalRecords: duplicateResult.totalRecords,
+          duplicateCount: duplicateResult.duplicateCount,
+          potentialDuplicatesCount: duplicateResult.potentialDuplicates.length,
+        });
+
+        // Also check for duplicates within the batch itself
+        const internalDuplicates = DuplicateDetectionService.findInternalDuplicates(
+          result.validRecords
+        );
+
+        console.log('[StudentImportHandler] Internal duplicates found:', internalDuplicates.length);
+
+        const allDuplicates = [
+          ...duplicateResult.potentialDuplicates,
+          ...internalDuplicates,
+        ];
+
+        if (allDuplicates.length > 0) {
+          console.log('[StudentImportHandler] Showing duplicate review dialog with', allDuplicates.length, 'duplicates');
+          setDuplicateDetectionResult({
+            ...duplicateResult,
+            potentialDuplicates: allDuplicates,
+          });
+          setShowDuplicateReview(true);
+          toast.warning(`Found ${allDuplicates.length} potential duplicate record(s). Please review.`);
+        } else {
+          console.log('[StudentImportHandler] No duplicates found, ready to import');
+        }
+      } catch (error) {
+        console.error('[StudentImportHandler] Error detecting duplicates:', error);
+        toast.error('Error checking for duplicates. Please proceed with caution.');
+      }
+    }
   };
 
   /**
-   * Import validated students
+   * Import validated students (after duplicate review)
    */
   const handleImport = async () => {
     if (!validationResult?.isValid) {
@@ -95,7 +145,9 @@ export function StudentImportHandler({
     const errors: string[] = [];
 
     try {
-      const recordsToImport = validationResult.validRecords;
+      const recordsToImport = validationResult.validRecords.filter(
+        (record: any) => !skippedRecords.has(record.student_id)
+      );
       const totalRecords = recordsToImport.length;
 
       for (let i = 0; i < recordsToImport.length; i++) {
@@ -135,6 +187,12 @@ export function StudentImportHandler({
         onImportComplete?.(importedStudents);
       }
 
+      if (skippedRecords.size > 0) {
+        toast.info(
+          `Skipped ${skippedRecords.size} record${skippedRecords.size !== 1 ? 's' : ''} due to duplicate detection`
+        );
+      }
+
       if (errors.length > 0) {
         toast.warning(`Import completed with ${errors.length} errors`);
         onImportError?.(errors);
@@ -145,6 +203,8 @@ export function StudentImportHandler({
       setParsedRecords([]);
       setValidationResult(null);
       setImportProgress(0);
+      setDuplicateDetectionResult(null);
+      setSkippedRecords(new Set());
     } catch (error) {
       const errorMsg = `Import failed: ${(error as Error).message}`;
       toast.error(errorMsg);
@@ -154,9 +214,43 @@ export function StudentImportHandler({
     }
   };
 
+  /**
+   * Handle duplicate review completion
+   */
+  const handleDuplicateReviewComplete = (skippedIds: string[]) => {
+    setSkippedRecords(new Set(skippedIds));
+    setShowDuplicateReview(false);
+    
+    if (skippedIds.length > 0) {
+      toast.info(
+        `${skippedIds.length} record${skippedIds.length !== 1 ? 's' : ''} marked to skip`
+      );
+    }
+    
+    // Proceed with import
+    handleImport();
+  };
+
   return (
     <div className="space-y-4 p-6 border rounded-lg bg-gray-50">
       <h3 className="font-semibold text-lg">Import Students</h3>
+
+      {/* Duplicate Review Dialog */}
+      {duplicateDetectionResult && (
+        <DuplicateReviewDialog
+          open={showDuplicateReview}
+          duplicates={duplicateDetectionResult.potentialDuplicates}
+          totalRecords={validationResult?.parsedCount || duplicateDetectionResult.totalRecords}
+          onProceed={handleDuplicateReviewComplete}
+          onCancel={() => {
+            setShowDuplicateReview(false);
+            setDuplicateDetectionResult(null);
+            setValidationResult(null);
+            setParsedRecords([]);
+          }}
+          isLoading={importing}
+        />
+      )}
 
       {/* File Upload */}
       <div className="flex flex-col gap-4">
@@ -191,7 +285,7 @@ export function StudentImportHandler({
       )}
 
       {/* Import Button */}
-      {validationResult?.isValid && parsedRecords.length > 0 && (
+      {validationResult?.isValid && parsedRecords.length > 0 && !showDuplicateReview && (
         <Button
           onClick={handleImport}
           disabled={importing}
@@ -206,7 +300,7 @@ export function StudentImportHandler({
           ) : (
             <>
               <Upload className="w-4 h-4 mr-2" />
-              Import {validationResult.validRecords.length} Students
+              Import {validationResult.validRecords.length - skippedRecords.size} Students
             </>
           )}
         </Button>
