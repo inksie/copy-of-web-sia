@@ -18,8 +18,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showPasswordField, setShowPasswordField] = useState(false);
-  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -65,7 +64,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   };
 
   const togglePasswordVisibility = () => {
-    setPasswordVisible(!passwordVisible);
+    setShowPassword(!showPassword);
   };
 
   return (
@@ -87,7 +86,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
           borderWidth: '1px',
           boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.15)'
         }}>
-          {!showPasswordField ? (
+          {!showPassword ? (
             <>
               <h2 className="text-2xl font-bold mb-2" style={{ color: '#166534' }}>Sign in</h2>
               <p className="text-sm mb-8" style={{ color: '#B38B00' }}>
@@ -102,7 +101,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 
               <form onSubmit={(e) => {
                 e.preventDefault();
-                if (email) setShowPasswordField(true);
+                if (email) setShowPassword(true);
               }} className="space-y-6">
                 <div className="relative">
                   <Mail className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#B38B00' }} />
@@ -149,7 +148,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
           ) : (
             <>
               <button
-                onClick={() => setShowPasswordField(false)}
+                onClick={() => setShowPassword(false)}
                 className="flex items-center gap-2 text-sm font-medium hover:underline mb-6 transition-all"
                 style={{ color: '#B38B00' }}
               >
@@ -172,7 +171,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#B38B00' }} />
                   <Input
-                    type={passwordVisible ? "text" : "password"}
+                    type={showPassword ? "text" : "password"}
                     placeholder="Password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -190,10 +189,10 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                     onClick={togglePasswordVisibility}
                     className="absolute right-4 top-1/2 transform -translate-y-1/2"
                   >
-                    {passwordVisible ? (
-                      <Eye className="w-5 h-5" style={{ color: '#B38B00' }} />
-                    ) : (
+                    {showPassword ? (
                       <EyeOff className="w-5 h-5" style={{ color: '#B38B00' }} />
+                    ) : (
+                      <Eye className="w-5 h-5" style={{ color: '#B38B00' }} />
                     )}
                   </button>
                 </div>
@@ -286,26 +285,16 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                   <Mail className="w-8 h-8" style={{ color: '#166534' }} />
                 </div>
                 <h3 className="text-lg font-semibold mb-2" style={{ color: '#166534' }}>Check your email</h3>
-                <p className="text-sm mb-6" style={{ color: '#B38B00' }}>
+                <p className="text-sm mb-4" style={{ color: '#B38B00' }}>
                   We've sent a password reset link to <strong style={{ color: '#166534' }}>{resetEmail}</strong>
                 </p>
-<button
-  onClick={closeModal}
-  className="
-    px-6 py-2 rounded-lg font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#166534] hover:text-white
-    hover:shadow-lg hover:scale-105
-    active:scale-95
-  "
-  style={{
-    borderColor: "#166534",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Close
-</button>
+                <button
+                  onClick={closeModal}
+                  className="text-sm font-medium hover:underline transition-all"
+                  style={{ color: '#B38B00' }}
+                >
+                  Close
+                </button>
               </div>
             ) : (
               <form onSubmit={handleForgotPassword} className="space-y-6">
@@ -328,25 +317,18 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 </div>
 
                 <div className="flex gap-3">
-<button
-  type="button"
-  onClick={closeModal}
-  className="
-    flex-1 h-12 px-4 py-2 rounded-xl font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#F0E6D2] hover:border-[#166534]
-    hover:shadow-md hover:scale-[1.02]
-    active:scale-95
-  "
-  style={{
-    borderColor: "#F0E6D2",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Cancel
-</button>
-
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
+                    style={{ 
+                      borderColor: '#F0E6D2',
+                      color: '#166534',
+                      backgroundColor: 'transparent'
+                    }}
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="submit"
                     disabled={resetLoading || !resetEmail}

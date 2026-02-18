@@ -328,25 +328,18 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 </div>
 
                 <div className="flex gap-3">
-<button
-  type="button"
-  onClick={closeModal}
-  className="
-    flex-1 h-12 px-4 py-2 rounded-xl font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#F0E6D2] hover:border-[#166534]
-    hover:shadow-md hover:scale-[1.02]
-    active:scale-95
-  "
-  style={{
-    borderColor: "#F0E6D2",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Cancel
-</button>
-
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
+                    style={{ 
+                      borderColor: '#F0E6D2',
+                      color: '#166534',
+                      backgroundColor: 'transparent'
+                    }}
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="submit"
                     disabled={resetLoading || !resetEmail}

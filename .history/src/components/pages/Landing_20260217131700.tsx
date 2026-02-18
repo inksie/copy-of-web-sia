@@ -82,21 +82,18 @@ export default function Landing() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#FEF9E7]">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5">
       {/* Navigation */}
-      <nav className="border-b bg-[#FEF9E7]/80 backdrop-blur-sm sticky top-0 z-50" style={{ borderColor: '#F0E6D2' }}>
+      <nav className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-3 sm:px-4">
           <div className="flex justify-between items-center h-12 sm:h-14">
             <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-bold truncate" style={{ color: '#166534' }}>SIA</h1>
+              <h1 className="text-base sm:text-lg font-bold truncate">SIA</h1>
               <p className="text-xs text-muted-foreground -mt-0.5">Smart Exam Checking</p>
             </div>
             <button 
               onClick={() => router.push('/auth')}
-              className="gap-1 h-8 sm:h-9 text-xs sm:text-sm flex-shrink-0 ml-2 px-3 py-2 rounded-md font-semibold transition-colors"
-              style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
+              className="gap-1 h-8 sm:h-9 text-xs sm:text-sm flex-shrink-0 ml-2 px-3 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md font-semibold transition-colors"
             >
               <span className="hidden sm:inline">Get Started</span>
               <span className="sm:hidden">Start</span>
@@ -106,10 +103,9 @@ export default function Landing() {
       </nav>
 
       {/* Hero Section */}
-      <section className="py-10 sm:py-16 px-3 sm:px-4" style={{ background: 'linear-gradient(to bottom right, rgba(22, 101, 52, 0.1), rgba(179, 139, 0, 0.05), rgba(22, 101, 52, 0.1))' }}>
+      <section className="py-10 sm:py-16 px-3 sm:px-4 bg-gradient-to-br from-primary/10 via-accent/5 to-primary/10">
         <div className="max-w-5xl mx-auto text-center">
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-4 sm:mb-6 leading-tight tracking-tight" 
-              style={{ background: 'linear-gradient(to right, #166534, #B38B00, #166534)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-4 sm:mb-6 bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent leading-tight tracking-tight">
             Smart Exam Checking<br />& Auto-Grading System
           </h1>
           
@@ -123,10 +119,7 @@ export default function Landing() {
 
           <button 
             onClick={() => router.push('/auth')}
-            className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors inline-flex items-center gap-2"
-            style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
+            className="px-4 sm:px-6 py-2 sm:py-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md font-semibold transition-colors inline-flex items-center gap-2"
           >
             <span className="hidden sm:inline">Start Now</span>
             <span className="sm:hidden">Start</span>
@@ -136,10 +129,10 @@ export default function Landing() {
       </section>
 
       {/* Four Subsystems Section */}
-      <section className="py-10 sm:py-16 px-3 sm:px-4" style={{ backgroundColor: '#FEF9E7' }}>
+      <section className="py-10 sm:py-16 px-3 sm:px-4 bg-background/50">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-8 sm:mb-12">
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3" style={{ color: '#166534' }}>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3">
               One System. Four Integrated Subsystems.
             </h2>
             <p className="text-sm sm:text-base text-muted-foreground">
@@ -153,15 +146,13 @@ export default function Landing() {
               return (
                 <Card 
                   key={index}
-                  className="p-4 sm:p-6 hover:shadow-lg transition-all bg-card"
-                  style={{ borderColor: '#F0E6D2', boxShadow: '0 4px 6px -1px rgba(22, 101, 52, 0.1), 0 2px 4px -1px rgba(22, 101, 52, 0.06)' }}
+                  className="p-4 sm:p-6 hover:shadow-lg transition-all bg-card border border-primary/10 hover:border-primary/30"
                 >
                   <div className="flex items-start gap-3 sm:gap-4 mb-3 sm:mb-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center flex-shrink-0"
-                         style={{ backgroundColor: 'rgba(22, 101, 52, 0.1)' }}>
-                      <Icon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#166534' }} />
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
                     </div>
-                    <h3 className="font-bold text-sm sm:text-base pt-1" style={{ color: '#166534' }}>{subsystem.title}</h3>
+                    <h3 className="font-bold text-sm sm:text-base pt-1">{subsystem.title}</h3>
                   </div>
                   
                   <p className="text-xs sm:text-sm text-muted-foreground mb-4 leading-relaxed">
@@ -171,7 +162,7 @@ export default function Landing() {
                   <ul className="space-y-1.5 sm:space-y-2">
                     {subsystem.features.map((feature, idx) => (
                       <li key={idx} className="flex items-start gap-2">
-                        <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#166534' }} />
+                        <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
                         <span className="text-xs sm:text-sm text-muted-foreground">{feature}</span>
                       </li>
                     ))}
@@ -184,10 +175,10 @@ export default function Landing() {
       </section>
 
       {/* Benefits Section */}
-      <section className="py-10 sm:py-16 px-3 sm:px-4" style={{ backgroundColor: '#FEF9E7' }}>
+      <section className="py-10 sm:py-16 px-3 sm:px-4 bg-background">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-8 sm:mb-12">
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3" style={{ color: '#166534' }}>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2 sm:mb-3">
               Why Choose SIA?
             </h2>
             <p className="text-sm sm:text-base text-muted-foreground">
@@ -202,13 +193,11 @@ export default function Landing() {
                 <Card 
                   key={index}
                   className="p-4 sm:p-6 text-center bg-card hover:bg-accent/5 transition-all"
-                  style={{ borderColor: '#F0E6D2', boxShadow: '0 4px 6px -1px rgba(22, 101, 52, 0.1), 0 2px 4px -1px rgba(22, 101, 52, 0.06)' }}
                 >
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg flex items-center justify-center mx-auto mb-3 sm:mb-4"
-                       style={{ backgroundColor: 'rgba(22, 101, 52, 0.1)' }}>
-                    <Icon className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: '#B38B00' }} />
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Icon className="w-6 h-6 sm:w-7 sm:h-7 text-primary" />
                   </div>
-                  <h3 className="font-bold text-sm sm:text-base mb-1.5 sm:mb-2" style={{ color: '#166534' }}>{benefit.title}</h3>
+                  <h3 className="font-bold text-sm sm:text-base mb-1.5 sm:mb-2">{benefit.title}</h3>
                   <p className="text-xs sm:text-sm text-muted-foreground">
                     {benefit.description}
                   </p>
@@ -218,9 +207,9 @@ export default function Landing() {
           </div>
 
           {/* Key Features List */}
-          <Card className="p-4 sm:p-6 bg-card" style={{ borderColor: '#F0E6D2', boxShadow: '0 4px 6px -1px rgba(22, 101, 52, 0.1), 0 2px 4px -1px rgba(22, 101, 52, 0.06)' }}>
-            <h3 className="font-bold text-base sm:text-lg mb-4 sm:mb-5 flex items-center gap-2" style={{ color: '#166534' }}>
-              <Shield className="w-5 h-5" style={{ color: '#B38B00' }} />
+          <Card className="p-4 sm:p-6 bg-card border border-primary/20">
+            <h3 className="font-bold text-base sm:text-lg mb-4 sm:mb-5 flex items-center gap-2">
+              <Shield className="w-5 h-5 text-primary" />
               Key Capabilities
             </h3>
             
@@ -236,7 +225,7 @@ export default function Landing() {
                 'Institutional branding support'
               ].map((feature, idx) => (
                 <div key={idx} className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#166534' }} />
+                  <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
                   <span className="text-xs sm:text-sm text-muted-foreground">{feature}</span>
                 </div>
               ))}
@@ -246,23 +235,20 @@ export default function Landing() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-10 sm:py-12 px-3 sm:px-4" style={{ backgroundColor: '#166534' }}>
+      <section className="py-10 sm:py-12 px-3 sm:px-4 bg-primary">
         <div className="max-w-4xl mx-auto">
           <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-4 sm:gap-6">
-            <div className="text-center sm:text-left">
-              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-1 sm:mb-2 leading-tight" style={{ color: '#FEF9E7' }}>
+            <div className="text-white text-center sm:text-left">
+              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-1 sm:mb-2 leading-tight">
                 Streamline Your Grading Process
               </h2>
-              <p className="text-xs sm:text-sm" style={{ color: 'rgba(254, 249, 231, 0.9)' }}>
+              <p className="text-xs sm:text-sm text-white/90">
                 Focus on teaching. Let SIA handle the grading.
               </p>
             </div>
             <button 
               onClick={() => router.push('/auth')}
-              className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors flex-shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
-              style={{ backgroundColor: '#B38B00', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#8f6f00'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#B38B00'}
+              className="px-4 sm:px-6 py-2 sm:py-3 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md font-semibold transition-colors flex-shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
             >
               <span className="hidden sm:inline">Get Started Free</span>
               <span className="sm:hidden">Get Started</span>

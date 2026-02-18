@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -14,8 +13,7 @@ import {
   Archive,
   Settings,
   Menu,
-  X,
-  AlertTriangle
+  X
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
@@ -37,12 +35,10 @@ export function Sidebar() {
   const router = useRouter();
   const { signOut, user } = useAuth();
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen } = useSidebarContext();
-  const [showSignOutModal, setShowSignOutModal] = useState(false);
 
   const handleSignOut = () => {
     signOut();
     setMobileOpen(false);
-    setShowSignOutModal(false);
     router.push('/');
   };
 
@@ -131,15 +127,10 @@ export function Sidebar() {
           )}
           <div className="flex justify-center">
             <button
-              onClick={() => setShowSignOutModal(true)}
-              className="sidebar-item w-full justify-center text-left text-white/80 border-2 rounded-lg hover:text-white hover:bg-[#B38B00] hover:border-[#B38B00] transition-all duration-200"
-              style={{
-                borderColor: "#F0E6D2",
-                backgroundColor: "transparent",
-                color: "white"
-              }}
+              onClick={handleSignOut}
+              className="sidebar-item w-full justify-center text-left text-white/80 hover:text-white hover:bg-[#B38B00] transition-colors"
             >
-              <LogOut className="w-4 h-4 flex-shrink-0" style={{ color: "#B38B00" }} />
+              <LogOut className="w-4 h-4 flex-shrink-0" />
               {!collapsed && <span className="text-sm">Sign out</span>}
             </button>
           </div>
@@ -201,75 +192,22 @@ export function Sidebar() {
             </div>
           )}
           <div className="flex justify-center">
-            <button
-              onClick={() => setShowSignOutModal(true)}
-              className="sidebar-item w-full justify-center text-left border-2 rounded-lg hover:text-white hover:bg-[#B38B00] hover:border-[#B38B00] transition-all duration-200"
-              style={{
-                borderColor: "#F0E6D2",
-                backgroundColor: "#FEF9E7",
-                color: "#166534"
-              }}
-            >
-              <LogOut className="w-5 h-5 flex-shrink-0" style={{ color: "#B38B00" }} />
-              <span>Sign out</span>
-            </button>
+<button
+  onClick={handleSignOut}
+  className="
+    sidebar-item w-full justify-center text-left text-white/80 
+    border-2 border-transparent rounded-lg
+    hover:border-[#B38B00] hover:text-white hover:bg-[#B38B00] 
+    transition-all duration-200
+  "
+>
+  <LogOut className="w-5 h-5 flex-shrink-0" />
+  <span>Sign out</span>
+</button>
+
           </div>
         </div>
       </aside>
-
-      {showSignOutModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div 
-            className="absolute inset-0 bg-black/50" 
-            onClick={() => setShowSignOutModal(false)}
-          />
-          <div 
-            className="relative w-full max-w-md rounded-2xl p-8"
-            style={{ 
-              backgroundColor: '#FFFFFF', 
-              borderColor: '#F0E6D2', 
-              borderWidth: '1px',
-              boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.3)'
-            }}
-          >
-
-            <div className="text-center">
-              <div className="w-16 h-16 rounded-full bg-[#B38B00]/10 flex items-center justify-center mx-auto mb-4">
-                <AlertTriangle className="w-8 h-8" style={{ color: '#B38B00' }} />
-              </div>
-              
-              <h2 className="text-2xl font-bold mb-2" style={{ color: '#166534' }}>Sign Out</h2>
-              <p className="text-sm mb-6" style={{ color: '#B38B00' }}>
-                Are you sure you want to sign out? You'll need to log in again to access your exams and data.
-              </p>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowSignOutModal(false)}
-                  className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
-                  style={{ 
-                    borderColor: '#F0E6D2',
-                    color: '#166534',
-                    backgroundColor: 'transparent'
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSignOut}
-                  className="flex-1 h-12 px-4 py-2 text-white hover:opacity-90 rounded-xl font-medium transition-all duration-200"
-                  style={{ 
-                    backgroundColor: '#166534',
-                    boxShadow: '0 4px 8px -2px rgba(22, 101, 52, 0.2)'
-                  }}
-                >
-                  Sign Out
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

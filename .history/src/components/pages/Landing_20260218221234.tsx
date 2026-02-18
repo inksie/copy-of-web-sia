@@ -95,8 +95,6 @@ export default function Landing() {
               onClick={() => router.push('/auth')}
               className="gap-1 h-8 sm:h-9 text-xs sm:text-sm flex-shrink-0 ml-2 px-3 py-2 rounded-md font-semibold transition-colors"
               style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
             >
               <span className="hidden sm:inline">Get Started</span>
               <span className="sm:hidden">Start</span>
@@ -125,8 +123,6 @@ export default function Landing() {
             onClick={() => router.push('/auth')}
             className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors inline-flex items-center gap-2"
             style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
           >
             <span className="hidden sm:inline">Start Now</span>
             <span className="sm:hidden">Start</span>
@@ -261,8 +257,6 @@ export default function Landing() {
               onClick={() => router.push('/auth')}
               className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors flex-shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
               style={{ backgroundColor: '#B38B00', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#8f6f00'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#B38B00'}
             >
               <span className="hidden sm:inline">Get Started Free</span>
               <span className="sm:hidden">Get Started</span>

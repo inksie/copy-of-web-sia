@@ -217,6 +217,7 @@ export function Sidebar() {
         </div>
       </aside>
 
+      {/* Sign Out Confirmation Modal */}
       {showSignOutModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div 
@@ -232,6 +233,12 @@ export function Sidebar() {
               boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.3)'
             }}
           >
+            <button
+              onClick={() => setShowSignOutModal(false)}
+              className="absolute right-4 top-4 p-1 rounded-full hover:bg-[#F0E6D2] transition-colors"
+            >
+              <X className="w-5 h-5" style={{ color: '#166534' }} />
+            </button>
 
             <div className="text-center">
               <div className="w-16 h-16 rounded-full bg-[#B38B00]/10 flex items-center justify-center mx-auto mb-4">

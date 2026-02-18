@@ -191,9 +191,9 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                     className="absolute right-4 top-1/2 transform -translate-y-1/2"
                   >
                     {passwordVisible ? (
-                      <Eye className="w-5 h-5" style={{ color: '#B38B00' }} />
-                    ) : (
                       <EyeOff className="w-5 h-5" style={{ color: '#B38B00' }} />
+                    ) : (
+                      <Eye className="w-5 h-5" style={{ color: '#B38B00' }} />
                     )}
                   </button>
                 </div>
@@ -289,23 +289,17 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 <p className="text-sm mb-6" style={{ color: '#B38B00' }}>
                   We've sent a password reset link to <strong style={{ color: '#166534' }}>{resetEmail}</strong>
                 </p>
-<button
-  onClick={closeModal}
-  className="
-    px-6 py-2 rounded-lg font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#166534] hover:text-white
-    hover:shadow-lg hover:scale-105
-    active:scale-95
-  "
-  style={{
-    borderColor: "#166534",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Close
-</button>
+                <button
+                  onClick={closeModal}
+                  className="px-6 py-2 rounded-lg font-medium transition-all duration-200 border-2 hover:bg-[#F0E6D2]"
+                  style={{ 
+                    borderColor: '#166534',
+                    color: '#166534',
+                    backgroundColor: 'transparent'
+                  }}
+                >
+                  Close
+                </button>
               </div>
             ) : (
               <form onSubmit={handleForgotPassword} className="space-y-6">
@@ -328,25 +322,18 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 </div>
 
                 <div className="flex gap-3">
-<button
-  type="button"
-  onClick={closeModal}
-  className="
-    flex-1 h-12 px-4 py-2 rounded-xl font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#F0E6D2] hover:border-[#166534]
-    hover:shadow-md hover:scale-[1.02]
-    active:scale-95
-  "
-  style={{
-    borderColor: "#F0E6D2",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Cancel
-</button>
-
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
+                    style={{ 
+                      borderColor: '#F0E6D2',
+                      color: '#166534',
+                      backgroundColor: 'transparent'
+                    }}
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="submit"
                     disabled={resetLoading || !resetEmail}

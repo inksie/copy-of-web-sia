@@ -48,23 +48,23 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#FEF9E7' }}>
+      <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F8FAF5' }}>
         <div className="w-full max-w-md">
           <div className="rounded-2xl p-12 text-center" style={{ 
             backgroundColor: '#FFFFFF', 
-            borderColor: '#F0E6D2', 
+            borderColor: '#E8EDE6', 
             borderWidth: '1px',
-            boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.15)'
+            boxShadow: '0 20px 40px -12px rgba(62, 95, 68, 0.15)'
           }}>
-            <div className="w-16 h-16 rounded-full bg-[#166534]/10 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8" style={{ color: '#166534' }} />
+            <div className="w-16 h-16 rounded-full bg-[#3E5F44]/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8" style={{ color: '#3E5F44' }} />
             </div>
-            <h2 className="text-2xl font-bold mb-2" style={{ color: '#166534' }}>Account Created</h2>
-            <p className="mb-6" style={{ color: '#B38B00' }}>
-              Welcome to SIA, <strong style={{ color: '#166534' }}>{fullName}</strong>!
+            <h2 className="text-2xl font-bold mb-2" style={{ color: '#2C3E2F' }}>Account Created</h2>
+            <p className="mb-6" style={{ color: '#6B7F70' }}>
+              Welcome to SIA, <strong style={{ color: '#2C3E2F' }}>{fullName}</strong>!
             </p>
-            <p className="text-sm flex items-center justify-center gap-2" style={{ color: '#B38B00' }}>
-              <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#166534' }} />
+            <p className="text-sm flex items-center justify-center gap-2" style={{ color: '#6B7F70' }}>
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#3E5F44' }} />
               Redirecting to dashboard...
             </p>
           </div>
@@ -74,25 +74,25 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#FEF9E7' }}>
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ backgroundColor: '#F8FAF5' }}>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3">
-            <div className="w-12 h-12 flex items-center justify-center rounded-lg" style={{ backgroundColor: '#166534' }}>
+            <div className="w-12 h-12 flex items-center justify-center rounded-lg" style={{ backgroundColor: '#3E5F44' }}>
               <span className="text-2xl font-bold text-white">S</span>
             </div>
-            <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#166534' }}>SIA</h1>
+            <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#3E5F44' }}>SIA</h1>
           </div>
         </div>
 
         <div className="rounded-2xl p-8" style={{ 
           backgroundColor: '#FFFFFF', 
-          borderColor: '#F0E6D2', 
+          borderColor: '#E8EDE6', 
           borderWidth: '1px',
-          boxShadow: '0 20px 40px -12px rgba(22, 101, 52, 0.15)'
+          boxShadow: '0 20px 40px -12px rgba(62, 95, 68, 0.15)'
         }}>
-          <h2 className="text-2xl font-bold mb-2" style={{ color: '#166534' }}>Create account</h2>
-          <p className="text-sm mb-8" style={{ color: '#B38B00' }}>
+          <h2 className="text-2xl font-bold mb-2" style={{ color: '#2C3E2F' }}>Create account</h2>
+          <p className="text-sm mb-8" style={{ color: '#6B7F70' }}>
             to get started with SIA
           </p>
 
@@ -104,7 +104,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="relative">
-              <User className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#B38B00' }} />
+              <User className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#9AAEA3' }} />
               <Input
                 type="text"
                 placeholder="Full name"
@@ -112,9 +112,9 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
                 onChange={(e) => setFullName(e.target.value)}
                 className="h-14 text-base rounded-xl pl-12 pr-4 border-2 focus-visible:ring-2 focus-visible:ring-offset-0"
                 style={{ 
-                  borderColor: '#F0E6D2',
-                  color: '#166534',
-                  backgroundColor: '#FEF9E7'
+                  borderColor: '#E0E8E2',
+                  color: '#2C3E2F',
+                  backgroundColor: '#F8FAF5'
                 }}
                 required
                 autoFocus
@@ -122,7 +122,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
             </div>
 
             <div className="relative">
-              <Mail className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#B38B00' }} />
+              <Mail className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#9AAEA3' }} />
               <Input
                 type="email"
                 placeholder="Email"
@@ -130,16 +130,16 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
                 onChange={(e) => setEmail(e.target.value)}
                 className="h-14 text-base rounded-xl pl-12 pr-4 border-2 focus-visible:ring-2 focus-visible:ring-offset-0"
                 style={{ 
-                  borderColor: '#F0E6D2',
-                  color: '#166534',
-                  backgroundColor: '#FEF9E7'
+                  borderColor: '#E0E8E2',
+                  color: '#2C3E2F',
+                  backgroundColor: '#F8FAF5'
                 }}
                 required
               />
             </div>
 
             <div className="relative">
-              <Lock className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#B38B00' }} />
+              <Lock className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5" style={{ color: '#9AAEA3' }} />
               <Input
                 type="password"
                 placeholder="Password (at least 6 characters)"
@@ -147,9 +147,9 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
                 onChange={(e) => setPassword(e.target.value)}
                 className="h-14 text-base rounded-xl pl-12 pr-4 border-2 focus-visible:ring-2 focus-visible:ring-offset-0"
                 style={{ 
-                  borderColor: '#F0E6D2',
-                  color: '#166534',
-                  backgroundColor: '#FEF9E7'
+                  borderColor: '#E0E8E2',
+                  color: '#2C3E2F',
+                  backgroundColor: '#F8FAF5'
                 }}
                 required
                 minLength={6}
@@ -161,8 +161,8 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
               disabled={loading} 
               className="w-full h-14 px-4 py-2 text-white hover:opacity-90 rounded-xl font-semibold transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 transform hover:scale-[1.02] active:scale-[0.98]"
               style={{ 
-                backgroundColor: '#166534',
-                boxShadow: '0 8px 16px -4px rgba(22, 101, 52, 0.3)'
+                backgroundColor: '#3E5F44',
+                boxShadow: '0 8px 16px -4px rgba(62, 95, 68, 0.3)'
               }}
             >
               {loading ? (
@@ -180,7 +180,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
                 type="button"
                 onClick={onToggleMode}
                 className="text-sm font-medium hover:underline transition-all"
-                style={{ color: '#B38B00' }}
+                style={{ color: '#3E5F44' }}
               >
                 Already have an account? Sign in
               </button>
@@ -189,9 +189,9 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
         </div>
 
         <div className="mt-8 text-center text-sm">
-          <a href="#" className="hover:underline transition-all" style={{ color: '#B38B00' }}>Terms of use</a>
-          <span style={{ color: '#B38B00' }}> · </span>
-          <a href="#" className="hover:underline transition-all" style={{ color: '#B38B00' }}>Privacy policy</a>
+          <a href="#" className="hover:underline transition-all" style={{ color: '#6B7F70' }}>Terms of use</a>
+          <span style={{ color: '#6B7F70' }}> · </span>
+          <a href="#" className="hover:underline transition-all" style={{ color: '#6B7F70' }}>Privacy policy</a>
         </div>
       </div>
     </div>
