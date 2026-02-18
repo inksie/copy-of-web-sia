@@ -38,6 +38,8 @@ import {
 } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
+import { StudentIDService } from '@/services/studentIDService';
 import { 
   Search, 
   Plus, 
@@ -65,6 +67,10 @@ interface Class {
   room: string;
   students: Student[];
   created_at: string;
+  schedule_day?: string;
+  schedule_time?: string;
+  semester?: string;
+  school_year?: string;
 }
 
 export default function StudentClasses() {
@@ -177,29 +183,63 @@ export default function StudentClasses() {
     }
   };
 
-  const handleAddStudent = () => {
-    if (!newStudent.student_id || !newStudent.first_name || !newStudent.last_name) {
-      toast.error('Please fill in student ID, first name, and last name');
+  const handleAddStudent = async () => {
+    if (!newStudent.first_name.trim() || !newStudent.last_name.trim()) {
+      toast.error('Please fill in first name and last name');
       return;
     }
 
+    let studentId = newStudent.student_id.trim();
+
+    // Auto-generate when Student ID is not provided
+    if (!studentId) {
+      const generated = await StudentIDService.autoAssignIDs([
+        {
+          student_id: '',
+          first_name: newStudent.first_name.trim(),
+          last_name: newStudent.last_name.trim(),
+          email: newStudent.email.trim() || undefined,
+        },
+      ]);
+
+      if (!generated.success || !generated.ids || generated.ids.length === 0) {
+        toast.error(generated.error || 'Failed to auto-generate student ID');
+        return;
+      }
+
+      studentId = generated.ids[0];
+    }
+
     // Check for duplicate student ID
-    if (students.some(s => s.student_id === newStudent.student_id)) {
-      toast.error(`Student ID "${newStudent.student_id}" already exists in this class`);
+    if (students.some(s => s.student_id === studentId)) {
+      toast.error(`Student ID "${studentId}" already exists in this class`);
+      return;
+    }
+
+    // Check for duplicate student ID in database
+    const dbConflicts = await StudentIDService.checkForConflicts([studentId]);
+    if (dbConflicts.length > 0) {
+      toast.error(`Student ID "${studentId}" already exists in the database`);
       return;
     }
 
     // Check for duplicate student name (first name + last name combination)
-    if (students.some(s => s.first_name === newStudent.first_name && s.last_name === newStudent.last_name)) {
-      toast.error(`Student "${newStudent.first_name} ${newStudent.last_name}" already exists in this class`);
+    if (
+      students.some(
+        (s) =>
+          s.first_name.toLowerCase() === newStudent.first_name.trim().toLowerCase() &&
+          s.last_name.toLowerCase() === newStudent.last_name.trim().toLowerCase()
+      )
+    ) {
+      toast.error(`Student "${newStudent.first_name.trim()} ${newStudent.last_name.trim()}" already exists in this class`);
       return;
     }
 
     const student: Student = {
-      student_id: newStudent.student_id,
-      first_name: newStudent.first_name,
-      last_name: newStudent.last_name,
-      email: newStudent.email || undefined,
+      student_id: studentId,
+      first_name: newStudent.first_name.trim(),
+      last_name: newStudent.last_name.trim(),
+      email: newStudent.email.trim() || undefined,
     };
 
     setStudents([...students, student]);
@@ -209,7 +249,7 @@ export default function StudentClasses() {
       last_name: '',
       email: '',
     });
-    toast.success('Student added to roster');
+    toast.success(`Student added to roster${newStudent.student_id.trim() ? '' : ` (ID: ${studentId})`}`);
   };
 
   const handleRemoveStudent = (studentId: string) => {
@@ -217,10 +257,146 @@ export default function StudentClasses() {
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    toast.error('Excel import temporarily disabled');
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    setImporting(true);
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
+
+          const parsedStudents = rows
+            .map((row) => ({
+              student_id: String(row['student_id'] || row['Student ID'] || row['ID'] || row['id'] || '').trim(),
+              first_name: String(row['first_name'] || row['First Name'] || row['First'] || '').trim(),
+              last_name: String(row['last_name'] || row['Last Name'] || row['Last'] || '').trim(),
+              email: String(row['email'] || row['Email'] || '').trim(),
+            }))
+            .filter((row) => row.first_name && row.last_name);
+
+          if (parsedStudents.length === 0) {
+            toast.error('No valid student records found. First name and last name are required.');
+            return;
+          }
+
+          const idAssignmentResult = await StudentIDService.bulkImportStudents(parsedStudents, true);
+          if (!idAssignmentResult.success) {
+            toast.error(idAssignmentResult.error || 'Failed to auto-generate IDs for import');
+            return;
+          }
+
+          let generatedIndex = 0;
+          const studentsWithIds: Student[] = parsedStudents.map((row) => {
+            const existingId = row.student_id.trim();
+            if (existingId) {
+              return {
+                student_id: existingId,
+                first_name: row.first_name,
+                last_name: row.last_name,
+                email: row.email || undefined,
+              };
+            }
+
+            const generatedId = idAssignmentResult.ids?.[generatedIndex++];
+            return {
+              student_id: generatedId || '',
+              first_name: row.first_name,
+              last_name: row.last_name,
+              email: row.email || undefined,
+            };
+          });
+
+          if (studentsWithIds.some((s) => !s.student_id)) {
+            toast.error('Failed to assign IDs for one or more students.');
+            return;
+          }
+
+          const duplicateIdsInFile = new Set<string>();
+          const seenIds = new Set<string>();
+          for (const student of studentsWithIds) {
+            if (seenIds.has(student.student_id)) {
+              duplicateIdsInFile.add(student.student_id);
+            } else {
+              seenIds.add(student.student_id);
+            }
+          }
+
+          if (duplicateIdsInFile.size > 0) {
+            toast.error(`Duplicate IDs in file: ${Array.from(duplicateIdsInFile).join(', ')}`);
+            return;
+          }
+
+          const existingClassIds = new Set(students.map((s) => s.student_id));
+          const localConflicts = studentsWithIds
+            .map((s) => s.student_id)
+            .filter((id) => existingClassIds.has(id));
+          if (localConflicts.length > 0) {
+            toast.error(`IDs already in this class: ${Array.from(new Set(localConflicts)).join(', ')}`);
+            return;
+          }
+
+          const dbConflicts = await StudentIDService.checkForConflicts(
+            studentsWithIds.map((s) => s.student_id)
+          );
+          if (dbConflicts.length > 0) {
+            toast.error(`IDs already exist in database: ${Array.from(new Set(dbConflicts)).join(', ')}`);
+            return;
+          }
+
+          const generatedCount = parsedStudents.filter((s) => !s.student_id).length;
+          setImportPreview(studentsWithIds);
+          setShowImportDialog(true);
+          toast.success(
+            `Ready to import ${studentsWithIds.length} student(s)` +
+              (generatedCount > 0 ? ` with ${generatedCount} auto-generated ID(s)` : '')
+          );
+        } catch (error) {
+          console.error('Error parsing import file:', error);
+          toast.error('Failed to parse the uploaded file');
+        } finally {
+          setImporting(false);
+        }
+      };
+
+      reader.onerror = () => {
+        setImporting(false);
+        toast.error('Failed to read file');
+      };
+
+      reader.readAsArrayBuffer(file);
+    } catch (error) {
+      console.error('Error importing students:', error);
+      toast.error('Failed to import students');
+      setImporting(false);
+    }
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
+    if (importPreview.length === 0) return;
+
+    const currentIds = new Set(students.map((s) => s.student_id));
+    const idConflicts = importPreview
+      .map((s) => s.student_id)
+      .filter((id) => currentIds.has(id));
+    if (idConflicts.length > 0) {
+      toast.error(`Import blocked. Duplicate IDs in class: ${Array.from(new Set(idConflicts)).join(', ')}`);
+      return;
+    }
+
+    const dbConflicts = await StudentIDService.checkForConflicts(importPreview.map((s) => s.student_id));
+    if (dbConflicts.length > 0) {
+      toast.error(`Import blocked. IDs already exist in database: ${Array.from(new Set(dbConflicts)).join(', ')}`);
+      return;
+    }
+
     setStudents([...students, ...importPreview]);
     setImportPreview([]);
     setShowImportDialog(false);
@@ -228,7 +404,25 @@ export default function StudentClasses() {
   };
 
   const downloadTemplate = () => {
-    toast.error('Template download temporarily disabled');
+    const template = [
+      {
+        student_id: '',
+        first_name: 'Juan',
+        last_name: 'Dela Cruz',
+        email: 'juan.delacruz@example.com',
+      },
+      {
+        student_id: 'STU00001',
+        first_name: 'Maria',
+        last_name: 'Santos',
+        email: 'maria.santos@example.com',
+      },
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(template);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Students');
+    XLSX.writeFile(workbook, 'student_classes_template.xlsx');
   };
 
   const filteredClasses = classes.filter(c =>
@@ -448,7 +642,7 @@ export default function StudentClasses() {
                 <h4 className="font-medium">Add Student Manually</h4>
                 <div className="grid grid-cols-4 gap-3">
                   <Input
-                    placeholder="Student ID"
+                    placeholder="Student ID (optional)"
                     value={newStudent.student_id}
                     onChange={(e) => setNewStudent({ ...newStudent, student_id: e.target.value })}
                   />

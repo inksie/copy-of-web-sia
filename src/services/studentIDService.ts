@@ -61,35 +61,42 @@ export class StudentIDService {
    */
   static async checkForConflicts(studentIds: string[]): Promise<string[]> {
     try {
-      const conflicts: string[] = [];
+      const normalizedIds = studentIds.map((id) => id.trim()).filter(Boolean);
+      if (normalizedIds.length === 0) return [];
 
-      for (const studentId of studentIds) {
-        // Check in classes collection
-        const classesQuery = query(
-          collection(db, 'classes'),
-          where('students', 'array-contains', { student_id: studentId })
-        );
+      const [studentsSnapshot, classesSnapshot, rostersSnapshot] = await Promise.all([
+        getDocs(collection(db, 'students')),
+        getDocs(collection(db, 'classes')),
+        getDocs(collection(db, 'studentRosters')),
+      ]);
 
-        const classesSnapshot = await getDocs(classesQuery);
+      const existingIds = new Set<string>();
 
-        if (!classesSnapshot.empty) {
-          conflicts.push(studentId);
-        }
+      studentsSnapshot.forEach((studentDoc) => {
+        existingIds.add(studentDoc.id);
+      });
 
-        // Check in student rosters collection
-        const rostersQuery = query(
-          collection(db, 'studentRosters'),
-          where('studentIds', 'array-contains', studentId)
-        );
+      classesSnapshot.forEach((classDoc) => {
+        const classData = classDoc.data();
+        if (!Array.isArray(classData.students)) return;
+        classData.students.forEach((student: any) => {
+          if (student?.student_id && typeof student.student_id === 'string') {
+            existingIds.add(student.student_id.trim());
+          }
+        });
+      });
 
-        const rostersSnapshot = await getDocs(rostersQuery);
+      rostersSnapshot.forEach((rosterDoc) => {
+        const rosterData = rosterDoc.data();
+        if (!Array.isArray(rosterData.studentIds)) return;
+        rosterData.studentIds.forEach((studentId: string) => {
+          if (studentId && typeof studentId === 'string') {
+            existingIds.add(studentId.trim());
+          }
+        });
+      });
 
-        if (!rostersSnapshot.empty) {
-          conflicts.push(studentId);
-        }
-      }
-
-      return [...new Set(conflicts)]; // Remove duplicates
+      return normalizedIds.filter((id) => existingIds.has(id));
     } catch (error) {
       console.error('Error checking for conflicts:', error);
       return [];
@@ -160,6 +167,13 @@ export class StudentIDService {
   private static async getNextAvailableIDNumber(): Promise<number> {
     try {
       let maxNum = 0;
+
+      // Check students collection (source of truth)
+      const studentsSnapshot = await getDocs(collection(db, 'students'));
+      studentsSnapshot.forEach((studentDoc) => {
+        const num = this.extractNumberFromID(studentDoc.id);
+        if (num > maxNum) maxNum = num;
+      });
 
       // Check classes collection
       const classesSnapshot = await getDocs(collection(db, 'classes'));
