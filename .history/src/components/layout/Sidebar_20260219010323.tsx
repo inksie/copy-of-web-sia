@@ -21,22 +21,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/exams', label: 'Exams', icon: FileText },
   { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
-  { path: '/services', label: 'Services', icon: Zap },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
   { path: '/settings', label: 'Settings', icon: Settings },
@@ -227,6 +217,7 @@ export function Sidebar() {
         </div>
       </aside>
 
+      {/* Sign Out Confirmation Modal */}
       {showSignOutModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div 
@@ -243,6 +234,7 @@ export function Sidebar() {
             }}
           >
 
+
             <div className="text-center">
               <div className="w-16 h-16 rounded-full bg-[#B38B00]/10 flex items-center justify-center mx-auto mb-4">
                 <AlertTriangle className="w-8 h-8" style={{ color: '#B38B00' }} />
@@ -258,7 +250,7 @@ export function Sidebar() {
                   onClick={() => setShowSignOutModal(false)}
                   className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
                   style={{ 
-                    borderColor: '#F0E6D2',
+                    borderColor: '#B38B00',
                     color: '#166534',
                     backgroundColor: 'transparent'
                   }}

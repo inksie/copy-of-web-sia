@@ -28,11 +28,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 
   useEffect(() => {
     if (user && !loading) {
-      // Small delay to ensure all state updates are processed
-      const timer = setTimeout(() => {
-        router.push('/dashboard');
-      }, 100);
-      return () => clearTimeout(timer);
+      router.push('/dashboard');
     }
   }, [user, loading, router]);
 
@@ -47,8 +43,6 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       setError(error.message);
       setLoading(false);
     }
-    // If no error, the onAuthStateChanged listener will handle the redirect
-    // Don't set loading to false - let the useEffect handle it when user updates
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {

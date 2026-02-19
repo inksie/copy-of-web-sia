@@ -2,14 +2,16 @@
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Footer } from '@/components/layout/Footer';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
 import { PageLoadingSkeleton } from '@/components/LoadingSkeleton';
 import { 
+  BookOpen,
   Users, 
+  Smartphone,
+  BarChart3,
   CheckCircle,
   Upload,
   QrCode,
@@ -33,6 +35,33 @@ export default function Landing() {
   if (loading) {
     return <PageLoadingSkeleton />;
   }
+
+  const subsystems = [
+    {
+      icon: BookOpen,
+      title: 'Exam & Template Management',
+      description: 'Easily create exams, define answer keys, and generate standardized, printable answer sheets with Student ID bubbles. Track the number of generated exam papers for better exam control and accountability.',
+      features: ['Create exams quickly', 'Define answer keys', 'Generate printable sheets', 'Track exam papers']
+    },
+    {
+      icon: Users,
+      title: 'Student & Identification Management',
+      description: 'Maintain accurate student records by importing data through Excel or CSV files. Each student is identified using a unique Student ID, ensuring reliable identity matching during the scanning process.',
+      features: ['Import Excel/CSV', 'Manage student records', 'Unique Student IDs', 'ID validation']
+    },
+    {
+      icon: Smartphone,
+      title: 'Scanning & Auto-Grading',
+      description: 'Using a mobile application, instructors can scan completed answer sheets. The system reads both Student ID bubbles and answers, compares responses with the official answer key, and instantly computes scores.',
+      features: ['Mobile scanning', 'ID bubble reading', 'Answer comparison', 'Instant scoring']
+    },
+    {
+      icon: BarChart3,
+      title: 'Results, Reporting & Export',
+      description: 'All grades are securely stored in the database and displayed through a faculty dashboard. Export official grade reports in Excel, CSV, or PDF formats, complete with institutional branding.',
+      features: ['Secure storage', 'Faculty dashboard', 'Multi-format export', 'Custom branding']
+    }
+  ];
 
   const benefits = [
     {
@@ -66,8 +95,6 @@ export default function Landing() {
               onClick={() => router.push('/auth')}
               className="gap-1 h-8 sm:h-9 text-xs sm:text-sm flex-shrink-0 ml-2 px-3 py-2 rounded-md font-semibold transition-colors"
               style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
             >
               <span className="hidden sm:inline">Get Started</span>
               <span className="sm:hidden">Start</span>
@@ -96,8 +123,6 @@ export default function Landing() {
             onClick={() => router.push('/auth')}
             className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors inline-flex items-center gap-2"
             style={{ backgroundColor: '#166534', color: '#FEF9E7' }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0f4a2e'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#166534'}
           >
             <span className="hidden sm:inline">Start Now</span>
             <span className="sm:hidden">Start</span>
@@ -232,8 +257,6 @@ export default function Landing() {
               onClick={() => router.push('/auth')}
               className="px-4 sm:px-6 py-2 sm:py-3 rounded-md font-semibold transition-colors flex-shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
               style={{ backgroundColor: '#B38B00', color: '#FEF9E7' }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#8f6f00'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#B38B00'}
             >
               <span className="hidden sm:inline">Get Started Free</span>
               <span className="sm:hidden">Get Started</span>
@@ -242,9 +265,6 @@ export default function Landing() {
           </div>
         </div>
       </section>
-
-      {/* Footer */}
-      <Footer />
     </div>
   );
 }

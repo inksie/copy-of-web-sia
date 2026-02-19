@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation'; 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,23 +18,9 @@ import { CreateExamModal } from '@/components/modals/CreateExamModal';
 import { toast } from 'sonner';
 import { 
   createExam, 
+  getExams,
   type ExamFormData 
 } from '@/services/examService';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-
-// Define the Exam type
-interface Exam {
-  id: string;
-  title: string;
-  subject: string;
-  num_items: number;
-  created_at: string;
-  generated_sheets?: Array<{
-    sheet_count?: number;
-  }>;
-  [key: string]: any; // For other properties
-}
 
 interface DashboardStats {
   totalExams: number;
@@ -60,114 +46,24 @@ export default function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  
-  // Use ref to prevent double fetching
-  const hasFetched = useRef(false);
 
   useEffect(() => {
-    // Skip if no user ID or already fetched
-    if (!user?.id || hasFetched.current) {
-      if (!user?.id) setLoading(false);
-      return;
-    }
-
     async function fetchStats() {
       try {
-        console.log('Dashboard v2.0 - Fetching stats for user:', user.id);
-        
-        // OPTIMIZATION 1: Simplified query without orderBy to avoid needing composite index
-        const examsRef = collection(db, 'exams');
-        const q = query(
-          examsRef, 
-          where('createdBy', '==', user.id)
-        );
-        
-        let querySnapshot;
-        try {
-          // Add timeout to prevent hanging
-          querySnapshot = await Promise.race([
-            getDocs(q),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Query timeout')), 5000);
-            })
-          ]) as any;
-        } catch (queryError: any) {
-          console.warn('Dashboard query failed or timed out:', queryError.message);
-          // Fallback: set empty stats instead of failing
-          setStats({
-            totalExams: 0,
-            totalStudents: 0,
-            totalSheets: 0,
-            recentExams: [],
-          });
-          hasFetched.current = true;
+        if (!user?.id) {
+          setLoading(false);
           return;
         }
-        
-        // Calculate all stats from this single query
-        const totalExams = querySnapshot.size;
-        const exams = querySnapshot.docs.map((doc: any) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            title: data.title || '',
-            subject: data.subject || '',
-            num_items: data.num_items || 0,
-            created_at: data.created_at,
-            generated_sheets: data.generated_sheets || []
-          } as Exam;
-        })
-        // Sort by created_at descending (newest first) and limit to 5
-        .sort((a, b) => {
-          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          return dateB - dateA;
-        })
-        .slice(0, 5);
-        
-        // OPTIMIZATION 2: Compute total sheets from exam data
-        const totalSheets = exams.reduce((sum, exam) => {
-          // Check if generated_sheets exists and is an array
-          if (exam.generated_sheets && Array.isArray(exam.generated_sheets)) {
-            return sum + exam.generated_sheets.reduce((sheetSum, sheet) => 
-              sheetSum + (sheet.sheet_count || 0), 0
-            );
-          }
-          return sum;
-        }, 0);
-        
-        // OPTIMIZATION 3: Get student count from a separate lightweight query with timeout
-        let totalStudents = 0;
-        try {
-          const studentsRef = collection(db, 'students');
-          const studentsQuery = query(
-            studentsRef,
-            where('created_by', '==', user.id)
-          );
-          const studentsSnapshot = await Promise.race([
-            getDocs(studentsQuery),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Students query timeout')), 3000);
-            })
-          ]) as any;
-          totalStudents = studentsSnapshot.size;
-        } catch (error) {
-          console.log('Students collection query failed:', error);
-          totalStudents = 0; // Fallback to 0
-        }
-        
-        console.log('Dashboard data fetched successfully:', {
-          totalExams,
-          recentExams: exams.length,
-          totalStudents,
-          totalSheets
-        });
+
+        const exams = await getExams(user.id);
         
         setStats({
-          totalExams,
-          totalStudents,
-          totalSheets,
-          recentExams: exams.map(exam => ({
+          totalExams: exams.length,
+          totalStudents: 0, 
+          totalSheets: exams.reduce((sum, exam) => 
+            sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
+          ),
+          recentExams: exams.slice(0, 5).map(exam => ({
             id: exam.id,
             title: exam.title,
             subject: exam.subject,
@@ -175,75 +71,51 @@ export default function Dashboard() {
             created_at: exam.created_at,
           })),
         });
-        
-        // Mark as fetched to prevent duplicate requests
-        hasFetched.current = true;
-        
       } catch (error) {
         console.error('Error fetching stats:', error);
-        // Set empty stats on error instead of showing error toast
-        setStats({
-          totalExams: 0,
-          totalStudents: 0,
-          totalSheets: 0,
-          recentExams: [],
-        });
-        hasFetched.current = true;
+        toast.error('Failed to load dashboard data');
       } finally {
         setLoading(false);
       }
     }
 
     fetchStats();
-    
-    // Cleanup function
-    return () => {
-      // Reset ref if component unmounts
-      hasFetched.current = false;
-    };
-  }, [user?.id]); // Only depend on user.id
+  }, [user]);
 
-  const handleCreateExam = async (formData: ExamFormData) => {
-    try {
-      if (!user?.id) {
-        toast.error('You must be logged in to create an exam');
-        return;
-      }
-
-      const newExam = await createExam(formData, user.id);
-
-      // OPTIMIZATION 4: Update stats without refetching
-      setStats(prev => {
-        // Check if exam already exists in recentExams to prevent duplicates
-        const exists = prev.recentExams.some(exam => exam.id === newExam.id);
-        if (exists) return prev;
-        
-        return {
-          ...prev,
-          totalExams: prev.totalExams + 1,
-          recentExams: [
-            {
-              id: newExam.id,
-              title: newExam.title,
-              subject: newExam.subject,
-              num_items: newExam.num_items,
-              created_at: newExam.created_at,
-            },
-            ...prev.recentExams.slice(0, 4)
-          ],
-        };
-      });
-
-      toast.success(`Exam "${formData.name}" created successfully`);
-      setShowCreateModal(false);
-      
-      router.push(`/exams/${newExam.id}`);
-      
-    } catch (error) {
-      console.error('Error creating exam:', error);
-      toast.error('Failed to create exam');
+const handleCreateExam = async (formData: ExamFormData) => {
+  try {
+    if (!user?.id) {
+      toast.error('You must be logged in to create an exam');
+      return;
     }
-  };
+
+    const newExam = await createExam(formData, user.id);
+
+    setStats(prev => ({
+      ...prev,
+      totalExams: prev.totalExams + 1,
+      recentExams: [
+        {
+          id: newExam.id,
+          title: newExam.title,
+          subject: newExam.subject,
+          num_items: newExam.num_items,
+          created_at: newExam.created_at,
+        },
+        ...prev.recentExams.slice(0, 4)
+      ],
+    }));
+
+    toast.success(`Exam "${formData.name}" created successfully`);
+    setShowCreateModal(false);
+    
+    router.push(`/exams/${newExam.id}`);
+    
+  } catch (error) {
+    console.error('Error creating exam:', error);
+    toast.error('Failed to create exam');
+  }
+};
 
   const statCards = [
     {
@@ -410,6 +282,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {/* Add the CreateExamModal component */}
       <CreateExamModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
