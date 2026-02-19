@@ -28,7 +28,11 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 
   useEffect(() => {
     if (user && !loading) {
-      router.push('/dashboard');
+      // Small delay to ensure all state updates are processed
+      const timer = setTimeout(() => {
+        router.push('/dashboard');
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [user, loading, router]);
 

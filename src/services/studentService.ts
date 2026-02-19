@@ -23,6 +23,9 @@ export interface StudentRecord {
   created_at: string;
   updated_at: string;
   created_by: string;
+  validation_status?: 'official' | 'unvalidated' | 'pending'; // Validation status
+  validation_date?: string; // Date when record was marked official
+  validated_by?: string; // Admin/user who validated the record
 }
 
 export interface StudentEnrollment {
