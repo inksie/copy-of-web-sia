@@ -208,7 +208,7 @@ export class IDChangeLogger {
    */
   static async getStudentIDHistory(
     studentId: string,
-    limit: number = 10
+    _limit: number = 10
   ): Promise<IDChangeLog[]> {
     // This would query the auditLogs collection for records matching:
     // - entityType = 'student' or 'student_class'
@@ -225,7 +225,7 @@ export class IDChangeLogger {
    */
   static async getClassIDChangeHistory(
     classId: string,
-    limit: number = 100
+    _limit: number = 100
   ): Promise<IDChangeLog[]> {
     // This would query the auditLogs collection for records matching:
     // - entityId = classId
