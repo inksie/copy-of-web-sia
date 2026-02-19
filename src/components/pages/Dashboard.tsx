@@ -73,7 +73,7 @@ export default function Dashboard() {
 
     async function fetchStats() {
       try {
-        console.log('Fetching stats for user:', user.id);
+        console.log('Dashboard v2.0 - Fetching stats for user:', user.id);
         
         // OPTIMIZATION 1: Simplified query without orderBy to avoid needing composite index
         const examsRef = collection(db, 'exams');
