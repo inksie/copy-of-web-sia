@@ -39,7 +39,6 @@ const navItems = [
   { path: '/results', label: 'Results', icon: BarChart3 },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
-  { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export function Sidebar() {
