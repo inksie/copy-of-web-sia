@@ -27,6 +27,8 @@ export interface Exam {
   className?: string;
   examType?: 'board' | 'diagnostic';
   choicePoints?: { [choice: string]: number };
+  isArchived?: boolean;
+  archivedAt?: string;
 }
 
 export interface GeneratedSheet {
@@ -280,6 +282,75 @@ export async function updateExam(
   } catch (error) {
     console.error("Error updating exam:", error);
     throw new Error("Failed to update exam");
+  }
+}
+
+/**
+ * Archive an exam
+ */
+export async function archiveExam(examId: string): Promise<void> {
+  try {
+    const docRef = doc(db, "exams", examId);
+    await updateDoc(docRef, {
+      isArchived: true,
+      archivedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error("Error archiving exam:", error);
+    throw new Error("Failed to archive exam");
+  }
+}
+
+/**
+ * Get archived exams for a user
+ */
+export async function getArchivedExams(userId: string): Promise<Exam[]> {
+  try {
+    // Use where clause to filter by userId and isArchived to minimize data read
+    const q = query(
+      collection(db, "exams"),
+      where("createdBy", "==", userId),
+      where("isArchived", "==", true)
+    );
+    const querySnapshot = await getDocs(q);
+    const exams: Exam[] = [];
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      exams.push({
+        id: doc.id,
+        title: data.title,
+        subject: data.subject,
+        num_items: data.num_items,
+        choices_per_item: data.choices_per_item,
+        created_at:
+          data.created_at ||
+          data.createdAt?.toDate?.().toISOString() ||
+          new Date().toISOString(),
+        answer_keys: data.answer_keys || [],
+        generated_sheets: data.generated_sheets || [],
+        createdBy: data.createdBy,
+        updatedAt:
+          data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+        className: data.className || undefined,
+        isArchived: data.isArchived,
+        archivedAt:
+          data.archivedAt?.toDate?.().toISOString() || new Date().toISOString(),
+      });
+    });
+
+    // Sort by archive date
+    exams.sort((a, b) => {
+      const dateA = new Date(a.archivedAt || a.created_at).getTime();
+      const dateB = new Date(b.archivedAt || b.created_at).getTime();
+      return dateB - dateA;
+    });
+
+    return exams;
+  } catch (error: any) {
+    console.error("Error fetching archived exams:", error);
+    return [];
   }
 }
 

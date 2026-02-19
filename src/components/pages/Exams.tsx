@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Search, FileText, Eye, Trash2 } from "lucide-react";
+import { Plus, Search, FileText, Eye, Archive } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -31,7 +31,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   createExam,
   getExams,
-  deleteExam,
+  archiveExam,
   type Exam,
   type ExamFormData,
 } from "@/services/examService";
@@ -51,7 +51,7 @@ export default function Exams() {
   const [exams, setExams] = useState<ExamWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
@@ -98,10 +98,12 @@ export default function Exams() {
       }
 
       const fetchedExams = await getExams(user.id);
+      // Filter out archived exams
+      const activeExams = fetchedExams.filter((exam) => !exam.isArchived);
 
       // Fetch answer key status for each exam
       const examsWithStatus = await Promise.all(
-        fetchedExams.map(async (exam) => {
+        activeExams.map(async (exam) => {
           try {
             const result = await AnswerKeyService.getAnswerKeyByExamId(exam.id);
             if (result.success && result.data) {
@@ -196,19 +198,19 @@ export default function Exams() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteId) return;
+  const handleArchive = async () => {
+    if (!archiveId) return;
 
     try {
-      await deleteExam(deleteId);
+      await archiveExam(archiveId);
 
-      setExams(exams.filter((e) => e.id !== deleteId));
-      toast.success("Exam deleted successfully");
+      setExams(exams.filter((e) => e.id !== archiveId));
+      toast.success("Exam archived successfully");
     } catch (error) {
-      console.error("Error deleting exam:", error);
-      toast.error("Failed to delete exam");
+      console.error("Error archiving exam:", error);
+      toast.error("Failed to archive exam");
     } finally {
-      setDeleteId(null);
+      setArchiveId(null);
     }
   };
 
@@ -360,10 +362,10 @@ export default function Exams() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={() => setDeleteId(exam.id)}
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => setArchiveId(exam.id)}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Archive className="w-4 h-4" />
                       </Button>
                     </div>
                   </TableCell>
@@ -381,24 +383,22 @@ export default function Exams() {
         onCreateExam={handleCreateExam}
       />
 
-      {/* Delete Dialog */}
-      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+      {/* Archive Dialog */}
+      <AlertDialog open={!!archiveId} onOpenChange={() => setArchiveId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Exam</AlertDialogTitle>
+            <AlertDialogTitle>Archive Exam</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this exam? This will also delete
-              all associated answer keys and generated sheets. This action
-              cannot be undone.
+              Are you sure you want to archive this exam? It will be moved to the Archive page and you can restore it later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleArchive}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              Delete
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

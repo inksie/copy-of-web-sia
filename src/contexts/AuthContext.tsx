@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [session, setSession] = useState<AppSession | null>(null);
-  const [loading, setLoading] = useState(false); // Start as false for faster initial load
+  const [loading, setLoading] = useState(true); // Start as true to prevent premature access
   const [userRole, setUserRole] = useState<AppRole | null>(null);
   
   // OPTIMIZATION 2: Use ref for timeout management
