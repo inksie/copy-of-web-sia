@@ -8,7 +8,6 @@ import {
   where,
   getDocs,
   serverTimestamp,
-  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { StudentIDValidationService } from './studentIDValidationService';
@@ -18,7 +17,11 @@ export interface StudentRecord {
   first_name: string;
   last_name: string;
   email?: string;
+  section?: string;
   phone?: string;
+  archived?: boolean;
+  deleted_at?: string;
+  deleted_by?: string;
   enrolled_classes: string[]; // Array of class IDs
   created_at: string;
   updated_at: string;
@@ -53,6 +56,58 @@ const EXAM_RESULTS_COLLECTION = 'studentExamResults';
 
 export class StudentService {
   /**
+   * Get all students, optionally filtered by creator
+   */
+  static async getAllStudents(userId?: string): Promise<StudentRecord[]> {
+    try {
+      const q = userId
+        ? query(
+            collection(db, STUDENTS_COLLECTION),
+            where('created_by', '==', userId)
+          )
+        : query(collection(db, STUDENTS_COLLECTION));
+
+      const snapshot = await getDocs(q);
+      const students = snapshot.docs.map((studentDoc) => {
+        const data = studentDoc.data() as any;
+        return {
+          student_id: data.student_id || studentDoc.id,
+          first_name: data.first_name || '',
+          last_name: data.last_name || '',
+          email: data.email || undefined,
+          section: data.section || data.block || undefined,
+          phone: data.phone || undefined,
+          enrolled_classes: data.enrolled_classes || [],
+          created_at:
+            data.created_at?.toDate?.()?.toISOString?.() ||
+            data.created_at ||
+            new Date().toISOString(),
+          updated_at:
+            data.updated_at?.toDate?.()?.toISOString?.() ||
+            data.updated_at ||
+            new Date().toISOString(),
+          created_by: data.created_by || '',
+          validation_status: data.validation_status,
+          validation_date:
+            data.validation_date?.toDate?.()?.toISOString?.() ||
+            data.validation_date,
+          validated_by: data.validated_by,
+          archived: !!data.archived,
+          deleted_at:
+            data.deleted_at?.toDate?.()?.toISOString?.() ||
+            data.deleted_at,
+          deleted_by: data.deleted_by,
+        } as StudentRecord;
+      });
+
+      return students.filter((student) => !student.archived);
+    } catch (error) {
+      console.error('Error fetching students:', error);
+      return [];
+    }
+  }
+
+  /**
    * Create a new student record with Student ID as primary key
    * @throws Error if student ID already exists or fails validation
    */
@@ -61,7 +116,8 @@ export class StudentService {
     first_name: string,
     last_name: string,
     email: string | undefined,
-    created_by: string
+    created_by: string,
+    section?: string
   ): Promise<StudentRecord> {
     // Validate student record
     const recordValidation = await StudentIDValidationService.validateStudentRecord(
@@ -105,6 +161,7 @@ export class StudentService {
       first_name,
       last_name,
       email,
+      section,
       enrolled_classes: [],
       created_at: now,
       updated_at: now,
@@ -112,9 +169,13 @@ export class StudentService {
     };
 
     try {
+      const cleanStudentRecord = Object.fromEntries(
+        Object.entries(studentRecord).filter(([, value]) => value !== undefined)
+      );
+
       // Use student_id as the document ID for efficient queries
       await setDoc(doc(db, STUDENTS_COLLECTION, student_id), {
-        ...studentRecord,
+        ...cleanStudentRecord,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       });
@@ -173,35 +234,14 @@ export class StudentService {
    * Delete student record and cascade delete related data
    */
   static async deleteStudent(student_id: string, userId: string): Promise<void> {
-    const batch = writeBatch(db);
-
     try {
-      // 1. Delete student record
-      batch.delete(doc(db, STUDENTS_COLLECTION, student_id));
-
-      // 2. Delete all enrollments for this student
-      const enrollmentsQuery = query(
-        collection(db, ENROLLMENTS_COLLECTION),
-        where('student_id', '==', student_id)
-      );
-      const enrollmentDocs = await getDocs(enrollmentsQuery);
-      enrollmentDocs.forEach((doc) => batch.delete(doc.ref));
-
-      // 3. Delete all exam results for this student (soft delete by marking archived)
-      const resultsQuery = query(
-        collection(db, EXAM_RESULTS_COLLECTION),
-        where('student_id', '==', student_id)
-      );
-      const resultDocs = await getDocs(resultsQuery);
-      resultDocs.forEach((doc) => {
-        batch.update(doc.ref, {
-          archived: true,
-          deleted_at: serverTimestamp(),
-          deleted_by: userId,
-        });
+      // Soft delete only: mark student as archived
+      await updateDoc(doc(db, STUDENTS_COLLECTION, student_id), {
+        archived: true,
+        deleted_at: serverTimestamp(),
+        deleted_by: userId,
+        updated_at: serverTimestamp(),
       });
-
-      await batch.commit();
     } catch (error) {
       console.error(`Error deleting student ${student_id}:`, error);
       throw new Error(`Failed to delete student: ${(error as Error).message}`);
@@ -415,6 +455,7 @@ export class StudentService {
       first_name: string;
       last_name: string;
       email?: string;
+      section?: string;
     }>,
     created_by: string
   ): Promise<{ created: StudentRecord[]; errors: string[] }> {
@@ -428,7 +469,8 @@ export class StudentService {
           student.first_name,
           student.last_name,
           student.email,
-          created_by
+          created_by,
+          student.section
         );
         created.push(result);
       } catch (error) {
