@@ -41,6 +41,7 @@ import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { StudentIDService } from '@/services/studentIDService';
 import { IDChangeLogger } from '@/services/idChangeLogger';
+import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Search, 
@@ -90,6 +91,8 @@ export default function StudentClasses() {
   const [importing, setImporting] = useState(false);
   const [importPreview, setImportPreview] = useState<Student[]>([]);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<any>(null);
+  const [showValidationError, setShowValidationError] = useState(false);
   
   const [newClass, setNewClass] = useState({
     class_name: '',
@@ -279,6 +282,8 @@ export default function StudentClasses() {
     event.target.value = '';
 
     setImporting(true);
+    setValidationErrors(null);
+    setShowValidationError(false);
 
     try {
       const reader = new FileReader();
@@ -291,27 +296,47 @@ export default function StudentClasses() {
           const rows = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
 
           const parsedStudents = rows
-            .map((row) => ({
+            .map((row, idx) => ({
+              rowIndex: idx,
               student_id: String(row['student_id'] || row['Student ID'] || row['ID'] || row['id'] || '').trim(),
               first_name: String(row['first_name'] || row['First Name'] || row['First'] || '').trim(),
               last_name: String(row['last_name'] || row['Last Name'] || row['Last'] || '').trim(),
               email: String(row['email'] || row['Email'] || '').trim(),
-            }))
-            .filter((row) => row.first_name && row.last_name);
+              year: String(row['year'] || row['Year'] || row['Grade'] || '').trim(),
+              section: String(row['section'] || row['Section'] || row['Block'] || row['block'] || '').trim(),
+            }));
 
-          if (parsedStudents.length === 0) {
-            toast.error('No valid student records found. First name and last name are required.');
+          // Validate all records for required fields
+          const validationResult = StudentFieldValidationService.validateBulkRecords(parsedStudents);
+
+          if (validationResult.invalid > 0) {
+            setValidationErrors({
+              invalidRecords: validationResult.invalidRecords,
+              summary: validationResult.summary,
+            });
+            setShowValidationError(true);
+            toast.error(`${validationResult.invalid} of ${validationResult.total} records have validation errors`);
+            setImporting(false);
             return;
           }
 
-          const idAssignmentResult = await StudentIDService.bulkImportStudents(parsedStudents, true);
+          const validStudents = validationResult.validRecords.filter((row) => row.first_name && row.last_name);
+
+          if (validStudents.length === 0) {
+            toast.error('No valid student records found after validation.');
+            setImporting(false);
+            return;
+          }
+
+          const idAssignmentResult = await StudentIDService.bulkImportStudents(validStudents, true);
           if (!idAssignmentResult.success) {
             toast.error(idAssignmentResult.error || 'Failed to auto-generate IDs for import');
+            setImporting(false);
             return;
           }
 
           let generatedIndex = 0;
-          const studentsWithIds: Student[] = parsedStudents.map((row) => {
+          const studentsWithIds: Student[] = validStudents.map((row) => {
             const existingId = row.student_id.trim();
             if (existingId) {
               return {
@@ -333,6 +358,7 @@ export default function StudentClasses() {
 
           if (studentsWithIds.some((s) => !s.student_id)) {
             toast.error('Failed to assign IDs for one or more students.');
+            setImporting(false);
             return;
           }
 
