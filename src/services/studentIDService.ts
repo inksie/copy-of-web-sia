@@ -7,7 +7,7 @@ import { collection, getDocs, query, where, updateDoc, doc } from 'firebase/fire
 import { db } from '@/lib/firebase';
 
 export interface StudentIDConfig {
-  format: 'NUMERIC' | 'ALPHANUMERIC'; // STU00001 or 2024001
+  format: 'NUMERIC' | 'ALPHANUMERIC' | 'YEARLY_SEQUENCE'; // 2026-0001
   prefix?: string; // e.g., 'STU', 'SID'
   length: number; // Total length of ID
   startFrom?: number; // Starting number (default: 1)
@@ -23,25 +23,28 @@ export interface StudentIDResult {
 export class StudentIDService {
   /**
    * Generate temporary IDs for students
-   * Format: STU00001, STU00002, etc. or 2024001, 2024002, etc.
+   * Format: 2026-0001, 2026-0002, etc.
    */
   static generateTemporaryIDs(
     count: number,
     config: StudentIDConfig = {
-      format: 'NUMERIC',
-      prefix: 'STU',
-      length: 8,
+      format: 'YEARLY_SEQUENCE',
+      length: 4,
       startFrom: 1,
     }
   ): string[] {
     const ids: string[] = [];
     const start = config.startFrom || 1;
+    const currentYear = new Date().getFullYear();
 
     for (let i = 0; i < count; i++) {
       const num = start + i;
       let id: string;
 
-      if (config.format === 'ALPHANUMERIC' && config.prefix) {
+      if (config.format === 'YEARLY_SEQUENCE') {
+        const numStr = String(num).padStart(4, '0');
+        id = `${currentYear}-${numStr}`;
+      } else if (config.format === 'ALPHANUMERIC' && config.prefix) {
         // Format: STU00001, STU00002, etc.
         const numStr = String(num).padStart(config.length - config.prefix.length, '0');
         id = `${config.prefix}${numStr}`;
@@ -124,13 +127,19 @@ export class StudentIDService {
       // Get the next available ID number
       const nextNum = await this.getNextAvailableIDNumber();
       const defaultConfig: StudentIDConfig = {
-        format: 'ALPHANUMERIC',
-        prefix: 'STU',
-        length: 8,
+        format: 'YEARLY_SEQUENCE',
+        length: 4,
         startFrom: nextNum,
       };
 
       const mergedConfig = { ...defaultConfig, ...config };
+      const maxPossible = (mergedConfig.startFrom || 1) + studentsNeedingIds.length - 1;
+      if (mergedConfig.format === 'YEARLY_SEQUENCE' && maxPossible > 9999) {
+        return {
+          success: false,
+          error: 'Yearly ID limit reached (maximum is YYYY-9999).',
+        };
+      }
 
       // Generate new IDs
       const newIds = this.generateTemporaryIDs(studentsNeedingIds.length, mergedConfig);
@@ -167,11 +176,12 @@ export class StudentIDService {
   private static async getNextAvailableIDNumber(): Promise<number> {
     try {
       let maxNum = 0;
+      const currentYear = new Date().getFullYear();
 
       // Check students collection (source of truth)
       const studentsSnapshot = await getDocs(collection(db, 'students'));
       studentsSnapshot.forEach((studentDoc) => {
-        const num = this.extractNumberFromID(studentDoc.id);
+        const num = this.extractNumberFromID(studentDoc.id, currentYear);
         if (num > maxNum) maxNum = num;
       });
 
@@ -181,7 +191,7 @@ export class StudentIDService {
         const classData = classDoc.data();
         if (classData.students && Array.isArray(classData.students)) {
           classData.students.forEach((student: any) => {
-            const num = this.extractNumberFromID(student.student_id);
+            const num = this.extractNumberFromID(student.student_id, currentYear);
             if (num > maxNum) maxNum = num;
           });
         }
@@ -193,7 +203,7 @@ export class StudentIDService {
         const rosterData = rosterDoc.data();
         if (rosterData.studentIds && Array.isArray(rosterData.studentIds)) {
           rosterData.studentIds.forEach((studentId: string) => {
-            const num = this.extractNumberFromID(studentId);
+            const num = this.extractNumberFromID(studentId, currentYear);
             if (num > maxNum) maxNum = num;
           });
         }
@@ -208,9 +218,17 @@ export class StudentIDService {
 
   /**
    * Extract numeric part from student ID
-   * e.g., "STU00042" -> 42, "2024042" -> 42
+   * e.g., "2026-0042" -> 42
    */
-  private static extractNumberFromID(studentId: string): number {
+  private static extractNumberFromID(studentId: string, year?: number): number {
+    if (year) {
+      const yearlyMatch = studentId.match(new RegExp(`^${year}-(\\d{4})$`));
+      if (yearlyMatch) {
+        return parseInt(yearlyMatch[1], 10);
+      }
+      return 0;
+    }
+
     const numMatch = studentId.match(/\d+$/);
     if (numMatch) {
       return parseInt(numMatch[0], 10);

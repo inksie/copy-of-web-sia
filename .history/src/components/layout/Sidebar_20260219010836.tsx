@@ -21,22 +21,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebarContext } from '@/contexts/SidebarContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/exams', label: 'Exams', icon: FileText },
   { path: '/classes', label: 'Classes', icon: Users },
   { path: '/results', label: 'Results', icon: BarChart3 },
-  { path: '/services', label: 'Services', icon: Zap },
   { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/archive', label: 'Archive', icon: Archive },
   { path: '/settings', label: 'Settings', icon: Settings },

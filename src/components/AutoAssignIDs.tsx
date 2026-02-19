@@ -21,9 +21,8 @@ export function AutoAssignIDs({ students, onAssign, onCancel }: AutoAssignIDsPro
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [idConfig, setIdConfig] = useState<StudentIDConfig>({
-    format: 'ALPHANUMERIC',
-    prefix: 'STU',
-    length: 8,
+    format: 'YEARLY_SEQUENCE',
+    length: 4,
     startFrom: 1,
   });
   const [previewIDs, setPreviewIDs] = useState<string[]>([]);
@@ -117,37 +116,17 @@ export function AutoAssignIDs({ students, onAssign, onCancel }: AutoAssignIDsPro
                 onChange={(e) =>
                   setIdConfig({
                     ...idConfig,
-                    format: e.target.value as 'NUMERIC' | 'ALPHANUMERIC',
+                    format: e.target.value as StudentIDConfig['format'],
                   })
                 }
                 className="w-full px-3 py-2 border rounded-md bg-background text-sm"
               >
-                <option value="ALPHANUMERIC">Alphanumeric (STU00001)</option>
-                <option value="NUMERIC">Numeric Only (00001)</option>
+                <option value="YEARLY_SEQUENCE">Yearly Sequence (2026-0001)</option>
               </select>
             </div>
 
-            {idConfig.format === 'ALPHANUMERIC' && (
-              <div>
-                <Label htmlFor="prefix">Prefix</Label>
-                <Input
-                  id="prefix"
-                  value={idConfig.prefix || ''}
-                  onChange={(e) =>
-                    setIdConfig({
-                      ...idConfig,
-                      prefix: e.target.value.toUpperCase(),
-                    })
-                  }
-                  placeholder="e.g., STU, SID"
-                  maxLength={5}
-                  className="text-sm"
-                />
-              </div>
-            )}
-
             <div>
-              <Label htmlFor="length">Total Length</Label>
+              <Label htmlFor="length">Sequence Digits</Label>
               <Input
                 id="length"
                 type="number"
@@ -155,11 +134,12 @@ export function AutoAssignIDs({ students, onAssign, onCancel }: AutoAssignIDsPro
                 onChange={(e) =>
                   setIdConfig({
                     ...idConfig,
-                    length: Math.max(3, parseInt(e.target.value) || 5),
+                    length: Math.max(4, parseInt(e.target.value) || 4),
                   })
                 }
-                min="3"
-                max="20"
+                min="4"
+                max="4"
+                disabled
                 className="text-sm"
               />
             </div>

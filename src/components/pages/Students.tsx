@@ -284,16 +284,17 @@ export default function Students() {
   };
 
   const downloadTemplate = () => {
+    const currentYear = new Date().getFullYear();
     const template = [
       {
-        student_id: "STU001",
+        student_id: `${currentYear}-0001`,
         first_name: "First Name",
         last_name: "Last Name",
         email: "email@example.com",
         section: "Section",
       },
       {
-        student_id: "STU002",
+        student_id: `${currentYear}-0002`,
         first_name: "First Name",
         last_name: "Last Name",
         email: "email@example.com",
@@ -466,7 +467,7 @@ export default function Students() {
                 onChange={(e) =>
                   setNewStudent({ ...newStudent, student_id: e.target.value })
                 }
-                placeholder="e.g., 20230001"
+                placeholder="e.g., 2026-0001"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">

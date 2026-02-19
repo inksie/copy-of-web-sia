@@ -28,11 +28,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 
   useEffect(() => {
     if (user && !loading) {
-      // Small delay to ensure all state updates are processed
-      const timer = setTimeout(() => {
-        router.push('/dashboard');
-      }, 100);
-      return () => clearTimeout(timer);
+      router.push('/dashboard');
     }
   }, [user, loading, router]);
 
@@ -47,8 +43,6 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
       setError(error.message);
       setLoading(false);
     }
-    // If no error, the onAuthStateChanged listener will handle the redirect
-    // Don't set loading to false - let the useEffect handle it when user updates
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -299,10 +293,9 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
   onClick={closeModal}
   className="
     px-6 py-2 rounded-lg font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#166534] hover:text-white
-    hover:shadow-lg hover:scale-105
-    active:scale-95
+    border-2 transition-all duration-200
+    hover:bg-[#166534]/10
+    hover:shadow-[0_0_0_3px_rgba(22,101,52,0.3)]
   "
   style={{
     borderColor: "#166534",
@@ -312,6 +305,10 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
 >
   Close
 </button>
+
+
+
+
               </div>
             ) : (
               <form onSubmit={handleForgotPassword} className="space-y-6">
@@ -334,25 +331,18 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
                 </div>
 
                 <div className="flex gap-3">
-<button
-  type="button"
-  onClick={closeModal}
-  className="
-    flex-1 h-12 px-4 py-2 rounded-xl font-medium 
-    border-2 transition-all duration-300
-    hover:bg-[#F0E6D2] hover:border-[#166534]
-    hover:shadow-md hover:scale-[1.02]
-    active:scale-95
-  "
-  style={{
-    borderColor: "#F0E6D2",
-    color: "#166534",
-    backgroundColor: "transparent",
-  }}
->
-  Cancel
-</button>
-
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 h-12 px-4 py-2 rounded-xl font-medium transition-all duration-200 border-2"
+                    style={{ 
+                      borderColor: '#F0E6D2',
+                      color: '#166534',
+                      backgroundColor: 'transparent'
+                    }}
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="submit"
                     disabled={resetLoading || !resetEmail}

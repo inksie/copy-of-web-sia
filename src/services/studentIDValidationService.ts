@@ -38,6 +38,7 @@ export interface ImportValidationResult {
 export class StudentIDValidationService {
   private static readonly MIN_ID_LENGTH = 1;
   private static readonly MAX_ID_LENGTH = 50;
+  private static readonly STUDENT_ID_PATTERN = /^\d{4}-\d{4}$/;
   private static readonly VALIDATION_LOG: Array<{
     timestamp: string;
     action: string;
@@ -86,10 +87,16 @@ export class StudentIDValidationService {
       return result;
     }
 
-    // Check for invalid characters (allow alphanumeric, hyphens, underscores)
-    const validCharPattern = /^[a-zA-Z0-9_-]+$/;
-    if (!validCharPattern.test(trimmedId)) {
-      result.error = 'Student ID can only contain letters, numbers, hyphens, and underscores';
+    // Enforce strict format: YYYY-XXXX (e.g., 2026-0001)
+    if (!this.STUDENT_ID_PATTERN.test(trimmedId)) {
+      result.error = 'Student ID must follow YYYY-XXXX format (e.g., 2026-0001)';
+      this.logValidation('validate_single', student_id, 'FAILED', result.error);
+      return result;
+    }
+
+    const sequenceNumber = Number(trimmedId.split('-')[1]);
+    if (sequenceNumber < 1) {
+      result.error = 'Student ID sequence must be between 0001 and 9999';
       this.logValidation('validate_single', student_id, 'FAILED', result.error);
       return result;
     }
