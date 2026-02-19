@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -44,73 +44,148 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// OPTIMIZATION 1: Cache for user data
+const userCache = new Map<string, AppUser>();
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [session, setSession] = useState<AppSession | null>(null);
   const [loading, setLoading] = useState(false); // Start as false for faster initial load
   const [userRole, setUserRole] = useState<AppRole | null>(null);
+  
+  // OPTIMIZATION 2: Use ref for timeout management
+  const tokenTimeoutRef = useRef<NodeJS.Timeout>();
+  const firestoreTimeoutRef = useRef<NodeJS.Timeout>();
+
+  // OPTIMIZATION 3: Cleanup function for timeouts
+  const clearTimeouts = useCallback(() => {
+    if (tokenTimeoutRef.current) clearTimeout(tokenTimeoutRef.current);
+    if (firestoreTimeoutRef.current) clearTimeout(firestoreTimeoutRef.current);
+  }, []);
 
   // Listen to Firebase auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       try {
         if (firebaseUser) {
-          // User is signed in - set basic user info immediately
+          // User is signed in - set basic user info immediately (non-blocking)
           setFirebaseUser(firebaseUser);
           
-          // Create basic app user from Firebase data immediately
-          const basicAppUser: AppUser = {
-            id: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            user_metadata: {
-              full_name: firebaseUser.displayName || '',
-            },
-            displayName: firebaseUser.displayName || '',
-            role: 'instructor',
-          };
+          // OPTIMIZATION 4: Check cache first
+          const cachedUser = userCache.get(firebaseUser.uid);
           
-          setUser(basicAppUser);
-          setUserRole('instructor');
+          if (cachedUser) {
+            // Use cached user data
+            console.log('Using cached user data');
+            setUser(cachedUser);
+            setUserRole(cachedUser.role);
+            
+            setSession({
+              access_token: 'authenticated',
+              expires_in: 3600,
+              token_type: 'bearer',
+              user: cachedUser,
+            });
+          } else {
+            // Create basic app user from Firebase data
+            const basicAppUser: AppUser = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              user_metadata: {
+                full_name: firebaseUser.displayName || '',
+              },
+              displayName: firebaseUser.displayName || '',
+              role: 'instructor',
+            };
+            
+            setUser(basicAppUser);
+            setUserRole('instructor');
+            userCache.set(firebaseUser.uid, basicAppUser);
+            
+            setSession({
+              access_token: 'authenticated',
+              expires_in: 3600,
+              token_type: 'bearer',
+              user: basicAppUser,
+            });
+          }
           
-          const token = await firebaseUser.getIdToken();
-          const appSession: AppSession = {
-            access_token: token,
-            expires_in: 3600,
-            token_type: 'bearer',
-            user: basicAppUser,
-          };
-          setSession(appSession);
-          
-          // Then fetch additional data from Firestore in background (non-blocking)
-          // Wrap in try-catch to silently handle offline/permission errors
-          try {
-            getDoc(doc(db, 'users', firebaseUser.uid))
-              .then((userDoc) => {
-                const userData = userDoc.data();
-                if (userData) {
-                  setUser((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          created_at: userData?.createdAt?.toDate?.().toISOString() || prev.created_at,
-                          updated_at: userData?.updatedAt?.toDate?.().toISOString() || prev.updated_at,
-                          user_metadata: {
-                            full_name: userData?.fullName || prev.displayName || '',
-                          },
-                          displayName: userData?.fullName || prev.displayName || '',
-                        }
-                      : prev
-                  );
+          // OPTIMIZATION 5: Fetch token with timeout (without AbortController)
+          Promise.race([
+            firebaseUser.getIdToken(),
+            new Promise((_, reject) => {
+              tokenTimeoutRef.current = setTimeout(() => {
+                reject(new Error('Token fetch timeout'));
+              }, 2000);
+            })
+          ]).then((token) => {
+            setSession((prev) => prev ? {
+              ...prev,
+              access_token: token as string,
+            } : null);
+          }).catch((error) => {
+            if (error?.message !== 'Token fetch timeout') {
+              console.warn('Could not fetch ID token:', error?.message);
+            }
+          }).finally(() => {
+            clearTimeouts();
+          });
+
+          // OPTIMIZATION 6: Lazy load Firestore user data with timeout
+          if (!cachedUser) {
+            const loadUserData = async () => {
+              try {
+                const userDocRef = doc(db, 'users', firebaseUser.uid);
+                
+                // Add timeout to prevent blocking on slow Firestore
+                let userDoc;
+                try {
+                  userDoc = await Promise.race([
+                    getDoc(userDocRef),
+                    new Promise((_, reject) => {
+                      setTimeout(() => reject(new Error('Firestore timeout')), 500);
+                    })
+                  ]) as any;
+                } catch (timeoutError) {
+                  // Timeout or error - user is already logged in with basic data, skip Firestore fetch
+                  return;
                 }
-              })
-              .catch(() => {
-                // Silently fail - user is already logged in with basic Firebase data
-              });
-          } catch {
-            // Ignore errors - not critical
+                
+                if (userDoc && userDoc.exists()) {
+                  const userData = userDoc.data();
+                  const fullUserData: AppUser = {
+                    id: firebaseUser.uid,
+                    email: userData.email || firebaseUser.email || '',
+                    created_at: userData.createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+                    updated_at: userData.updatedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+                    user_metadata: {
+                      full_name: userData.fullName || firebaseUser.displayName || '',
+                    },
+                    displayName: userData.fullName || firebaseUser.displayName || '',
+                    role: userData.role || 'instructor',
+                  };
+                  
+                  setUser(fullUserData);
+                  setUserRole(userData.role || 'instructor');
+                  userCache.set(firebaseUser.uid, fullUserData);
+                  
+                  // Update session with full user data
+                  setSession((prev) => prev ? {
+                    ...prev,
+                    user: fullUserData,
+                  } : null);
+                }
+              } catch (error) {
+                // Silently fail - user is already logged in with basic data
+                // console.warn('Error loading user data:', error);
+              }
+            };
+            
+            // Load immediately in background (non-blocking)
+            loadUserData();
           }
         } else {
           // User is signed out
@@ -118,17 +193,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           setSession(null);
           setUserRole(null);
+          clearTimeouts();
         }
       } finally {
         setLoading(false);
       }
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      unsubscribe();
+      clearTimeouts();
+    };
+  }, [clearTimeouts]);
 
-  // Sign up with Firebase
-  const signUp = async (email: string, password: string, fullName: string) => {
+  // OPTIMIZATION 7: Memoized sign up function
+  const signUp = useCallback(async (email: string, password: string, fullName: string) => {
     try {
       // Validate inputs
       if (!email.trim()) {
@@ -147,28 +226,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: new Error('Please enter a valid email address') };
       }
 
-      // Create user in Firebase Auth
+      // OPTIMIZATION 8: Parallel execution for faster signup
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // Update display name
-      await updateProfile(firebaseUser, {
-        displayName: fullName,
-      });
+      // Run these in parallel
+      await Promise.allSettled([
+        // Update display name
+        updateProfile(firebaseUser, {
+          displayName: fullName,
+        }).catch(error => {
+          console.warn('Could not update display name:', error?.message);
+        }),
 
-      // Create user document in Firestore
-      try {
-        await setDoc(doc(db, 'users', firebaseUser.uid), {
+        // Create user document in Firestore
+        setDoc(doc(db, 'users', firebaseUser.uid), {
           email: email,
           fullName: fullName,
-          role: 'instructor', // All users are instructors
+          role: 'instructor',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
-      } catch (firestoreError: any) {
-        console.warn('Could not save user to Firestore:', firestoreError?.message);
-        // Continue even if Firestore write fails - user is created in Auth
-      }
+        }).catch(error => {
+          console.warn('Could not save user to Firestore:', error?.message);
+        })
+      ]);
 
       return { error: null };
     } catch (error: any) {
@@ -191,10 +272,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: new Error(userMessage) };
     }
-  };
+  }, []);
 
-  // Sign in with Firebase
-  const signIn = async (email: string, password: string) => {
+  // OPTIMIZATION 9: Memoized sign in function
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
       // Validate inputs
       if (!email.trim()) {
@@ -212,12 +293,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error };
       }
 
+      // Clear any cached user data for this email
+      // (Will be re-fetched on auth state change)
+      
       await signInWithEmailAndPassword(auth, email, password);
       return { error: null };
     } catch (error: any) {
       console.error('Sign in error:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
 
       // Map Firebase error codes to user-friendly messages
       let userMessage = 'Failed to sign in. Please check your credentials.';
@@ -246,16 +328,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: new Error(userMessage) };
     }
-  };
+  }, []);
 
-  // Sign out from Firebase
-  const signOut = async () => {
+  // OPTIMIZATION 10: Memoized sign out
+  const signOut = useCallback(async () => {
     try {
-      await firebaseSignOut(auth);
+      // Clear local state immediately for responsive UI
+      setUser(null);
+      setSession(null);
+      setUserRole(null);
+      setFirebaseUser(null);
+      
+      // Clear cache on sign out
+      if (firebaseUser?.uid) {
+        userCache.delete(firebaseUser.uid);
+      }
+      
+      // Sign out from Firebase in background (non-blocking)
+      firebaseSignOut(auth).catch((error) => {
+        console.error('Sign out error:', error);
+      });
     } catch (error) {
       console.error('Sign out error:', error);
     }
-  };
+  }, [firebaseUser?.uid]);
 
   return (
     <AuthContext.Provider 

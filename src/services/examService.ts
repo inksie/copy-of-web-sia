@@ -100,53 +100,123 @@ export async function createExam(
 }
 
 /**
- * Get all exams for a user
+ * Get recent exams for a user (lightweight - for dashboard)
+ * Uses client-side filtering to avoid composite index requirement
  */
-export async function getExams(userId?: string): Promise<Exam[]> {
+export async function getRecentExams(userId: string, limit: number = 5): Promise<Exam[]> {
   try {
-    let q;
-    if (userId) {
-      // Remove orderBy to avoid composite index requirement
-      q = query(collection(db, "exams"), where("createdBy", "==", userId));
-    } else {
-      q = query(collection(db, "exams"), orderBy("createdAt", "desc"));
-    }
-
+    // Fetch all exams without filters to avoid composite index
+    const q = query(collection(db, "exams"));
     const querySnapshot = await getDocs(q);
     const exams: Exam[] = [];
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      exams.push({
-        id: doc.id,
-        title: data.title,
-        subject: data.subject,
-        num_items: data.num_items,
-        choices_per_item: data.choices_per_item,
-        created_at:
-          data.created_at ||
-          data.createdAt?.toDate?.().toISOString() ||
-          new Date().toISOString(),
-        answer_keys: data.answer_keys || [],
-        generated_sheets: data.generated_sheets || [],
-        createdBy: data.createdBy,
-        updatedAt:
-          data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
-        className: data.className || undefined,
-      });
+      // Filter by userId on client-side
+      if (data.createdBy === userId) {
+        exams.push({
+          id: doc.id,
+          title: data.title,
+          subject: data.subject,
+          num_items: data.num_items,
+          choices_per_item: data.choices_per_item,
+          created_at:
+            data.created_at ||
+            data.createdAt?.toDate?.().toISOString() ||
+            new Date().toISOString(),
+          answer_keys: data.answer_keys || [],
+          generated_sheets: data.generated_sheets || [],
+          createdBy: data.createdBy,
+          updatedAt:
+            data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+          className: data.className || undefined,
+        });
+      }
     });
 
-    // Sort in JavaScript after fetching to avoid composite index requirement
-    if (userId) {
-      exams.sort((a, b) => {
-        const dateA = new Date(a.updatedAt || a.created_at).getTime();
-        const dateB = new Date(b.updatedAt || b.created_at).getTime();
-        return dateB - dateA;
-      });
-    }
+    // Sort and limit
+    exams.sort((a, b) => {
+      const dateA = new Date(a.updatedAt || a.created_at).getTime();
+      const dateB = new Date(b.updatedAt || b.created_at).getTime();
+      return dateB - dateA;
+    });
+
+    return exams.slice(0, limit);
+  } catch (error: any) {
+    console.error("Error fetching recent exams:", error);
+    return [];
+  }
+}
+
+/**
+ * Get exam count for a user (lightweight)
+ * Uses client-side filtering to avoid composite index requirement
+ */
+export async function getExamCount(userId: string): Promise<number> {
+  try {
+    // Fetch all exams without filters to avoid composite index
+    const q = query(collection(db, "exams"));
+    const querySnapshot = await getDocs(q);
+    let count = 0;
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      // Filter by userId on client-side
+      if (data.createdBy === userId) {
+        count++;
+      }
+    });
+
+    return count;
+  } catch (error: any) {
+    console.error("Error fetching exam count:", error);
+    return 0;
+  }
+}
+
+/**
+ * Get all exams for a user
+ */
+export async function getExams(userId?: string): Promise<Exam[]> {
+  try {
+    // Fetch all exams without filters to avoid composite index requirement
+    const q = query(collection(db, "exams"));
+    const querySnapshot = await getDocs(q);
+    const exams: Exam[] = [];
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      // Filter by userId if provided (client-side)
+      if (!userId || data.createdBy === userId) {
+        exams.push({
+          id: doc.id,
+          title: data.title,
+          subject: data.subject,
+          num_items: data.num_items,
+          choices_per_item: data.choices_per_item,
+          created_at:
+            data.created_at ||
+            data.createdAt?.toDate?.().toISOString() ||
+            new Date().toISOString(),
+          answer_keys: data.answer_keys || [],
+          generated_sheets: data.generated_sheets || [],
+          createdBy: data.createdBy,
+          updatedAt:
+            data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
+          className: data.className || undefined,
+        });
+      }
+    });
+
+    // Sort in JavaScript after fetching
+    exams.sort((a, b) => {
+      const dateA = new Date(a.updatedAt || a.created_at).getTime();
+      const dateB = new Date(b.updatedAt || b.created_at).getTime();
+      return dateB - dateA;
+    });
 
     return exams;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching exams:", error);
     throw new Error("Failed to fetch exams");
   }
