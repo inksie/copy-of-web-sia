@@ -14,6 +14,7 @@ import { db } from '@/lib/firebase';
 import { StudentGrade, GradingService } from './gradingService';
 import { StudentAttendance } from './attendanceService';
 import { StudentRecord } from './studentService';
+import { RecordValidationGuardService, ValidationError } from './recordValidationGuardService';
 
 /**
  * Comprehensive Student Report
@@ -147,8 +148,25 @@ export class ReportingService {
     success: boolean;
     data?: StudentComprehensiveReport;
     error?: string;
+    validation_errors?: ValidationError[];
   }> {
     try {
+      // Validate the report record using validation guard
+      const validationResult = await RecordValidationGuardService.validateReportRecord({
+        report_type: 'student',
+        entity_id: studentId,
+        generated_by: 'system',
+      });
+
+      // If validation fails, return errors
+      if (!validationResult.isValid) {
+        return {
+          success: false,
+          error: 'Report record validation failed',
+          validation_errors: validationResult.errors,
+        };
+      }
+
       // Fetch student record
       const studentSnapshot = await getDocs(
         query(

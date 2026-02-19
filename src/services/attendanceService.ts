@@ -20,6 +20,7 @@ import {
   and,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { RecordValidationGuardService, ValidationError } from './recordValidationGuardService';
 
 /**
  * Student Attendance Record
@@ -93,8 +94,6 @@ export interface BulkAttendanceUpdate {
 }
 
 const ATTENDANCE_COLLECTION = 'studentAttendance';
-const STUDENTS_COLLECTION = 'students';
-const CLASSES_COLLECTION = 'classes';
 
 export class AttendanceService {
   /**
@@ -105,18 +104,26 @@ export class AttendanceService {
     success: boolean;
     data?: StudentAttendance;
     error?: string;
+    validation_errors?: ValidationError[];
   }> {
     try {
-      // Validate that the student exists
-      const studentDoc = await getDoc(doc(db, STUDENTS_COLLECTION, attendanceData.student_id));
-      if (!studentDoc.exists()) {
-        return { success: false, error: `Student with ID ${attendanceData.student_id} not found` };
-      }
+      // Validate the attendance record using validation guard
+      const validationResult = await RecordValidationGuardService.validateAttendanceRecord({
+        student_id: attendanceData.student_id,
+        class_id: attendanceData.class_id,
+        date: attendanceData.date,
+        status: attendanceData.status,
+        remarks: attendanceData.remarks,
+        recorded_by: attendanceData.marked_by,
+      });
 
-      // Validate that the class exists
-      const classDoc = await getDoc(doc(db, CLASSES_COLLECTION, attendanceData.class_id));
-      if (!classDoc.exists()) {
-        return { success: false, error: `Class with ID ${attendanceData.class_id} not found` };
+      // If validation fails, block the save and return errors
+      if (!validationResult.isValid) {
+        return {
+          success: false,
+          error: 'Attendance record validation failed',
+          validation_errors: validationResult.errors,
+        };
       }
 
       const now = new Date().toISOString();

@@ -19,6 +19,7 @@ import {
   orderBy,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { RecordValidationGuardService, ValidationError } from './recordValidationGuardService';
 
 
 export interface StudentGrade {
@@ -92,9 +93,6 @@ export interface GradeInputData {
 }
 
 const GRADES_COLLECTION = 'studentGrades';
-const STUDENTS_COLLECTION = 'students';
-const EXAMS_COLLECTION = 'exams';
-const CLASSES_COLLECTION = 'classes';
 
 export class GradingService {
   /**
@@ -105,24 +103,26 @@ export class GradingService {
     success: boolean;
     data?: StudentGrade;
     error?: string;
+    validation_errors?: ValidationError[];
   }> {
     try {
-      // Validate that the student exists
-      const studentDoc = await getDoc(doc(db, STUDENTS_COLLECTION, gradeData.student_id));
-      if (!studentDoc.exists()) {
-        return { success: false, error: `Student with ID ${gradeData.student_id} not found` };
-      }
+      // Validate the grade record using validation guard
+      const validationResult = await RecordValidationGuardService.validateGradeRecord({
+        student_id: gradeData.student_id,
+        exam_id: gradeData.exam_id,
+        class_id: gradeData.class_id,
+        score: gradeData.score,
+        grade_letter: gradeData.letter_grade,
+        recorded_by: gradeData.graded_by,
+      });
 
-      // Validate that the exam exists
-      const examDoc = await getDoc(doc(db, EXAMS_COLLECTION, gradeData.exam_id));
-      if (!examDoc.exists()) {
-        return { success: false, error: `Exam with ID ${gradeData.exam_id} not found` };
-      }
-
-      // Validate that the class exists
-      const classDoc = await getDoc(doc(db, CLASSES_COLLECTION, gradeData.class_id));
-      if (!classDoc.exists()) {
-        return { success: false, error: `Class with ID ${gradeData.class_id} not found` };
+      // If validation fails, block the save and return errors
+      if (!validationResult.isValid) {
+        return {
+          success: false,
+          error: 'Grade record validation failed',
+          validation_errors: validationResult.errors,
+        };
       }
 
       const now = new Date().toISOString();
@@ -407,6 +407,7 @@ export class GradingService {
     success: boolean;
     data?: StudentGrade;
     error?: string;
+    validation_errors?: ValidationError[];
   }> {
     try {
       const gradeRef = doc(db, GRADES_COLLECTION, gradeId);
@@ -414,6 +415,27 @@ export class GradingService {
 
       if (!gradeDoc.exists()) {
         return { success: false, error: `Grade with ID ${gradeId} not found` };
+      }
+
+      const existingData = gradeDoc.data() as StudentGrade;
+
+      // Validate the updated grade record using validation guard
+      const validationResult = await RecordValidationGuardService.validateGradeRecord({
+        student_id: updates.student_id || existingData.student_id,
+        exam_id: updates.exam_id || existingData.exam_id,
+        class_id: updates.class_id || existingData.class_id,
+        score: updates.score ?? existingData.score,
+        grade_letter: updates.letter_grade || existingData.letter_grade,
+        recorded_by: updates.updated_by,
+      });
+
+      // If validation fails, block the update and return errors
+      if (!validationResult.isValid) {
+        return {
+          success: false,
+          error: 'Grade record validation failed',
+          validation_errors: validationResult.errors,
+        };
       }
 
       const updateData: any = {
