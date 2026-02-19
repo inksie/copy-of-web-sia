@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation'; 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,10 +18,23 @@ import { CreateExamModal } from '@/components/modals/CreateExamModal';
 import { toast } from 'sonner';
 import { 
   createExam, 
-  getExams,
   type ExamFormData 
 } from '@/services/examService';
-import { getClasses } from '@/services/classService';
+import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+
+// Define the Exam type
+interface Exam {
+  id: string;
+  title: string;
+  subject: string;
+  num_items: number;
+  created_at: string;
+  generated_sheets?: Array<{
+    sheet_count?: number;
+  }>;
+  [key: string]: any; // For other properties
+}
 
 interface DashboardStats {
   totalExams: number;
@@ -47,37 +60,83 @@ export default function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  
+  // Use ref to prevent double fetching
+  const hasFetched = useRef(false);
 
   useEffect(() => {
+    // Skip if no user ID or already fetched
+    if (!user?.id || hasFetched.current) {
+      if (!user?.id) setLoading(false);
+      return;
+    }
+
     async function fetchStats() {
       try {
-        if (!user?.id) {
-          console.log('No user ID, skipping fetch');
-          setLoading(false);
-          return;
-        }
-
         console.log('Fetching stats for user:', user.id);
-
-        const [exams, classes] = await Promise.all([
-          getExams(user.id),
-          getClasses(user.id),
-        ]);
-
-        console.log('Fetched exams:', exams.length);
-        console.log('Fetched classes:', classes);
-
-        // Count total students across all classes
-        const totalStudents = classes.reduce((sum, cls) => sum + (cls.students?.length || 0), 0);
         
-        console.log('Total students calculated:', totalStudents);
-
+        // OPTIMIZATION 1: Single query to get all exam data
+        const examsRef = collection(db, 'exams');
+        const q = query(
+          examsRef, 
+          where('createdBy', '==', user.id),
+          orderBy('created_at', 'desc'),
+          limit(10) // Get latest 10 exams
+        );
+        
+        const querySnapshot = await getDocs(q);
+        
+        // Calculate all stats from this single query
+        const totalExams = querySnapshot.size;
+        const exams = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            title: data.title || '',
+            subject: data.subject || '',
+            num_items: data.num_items || 0,
+            created_at: data.created_at,
+            generated_sheets: data.generated_sheets || []
+          } as Exam;
+        });
+        
+        // OPTIMIZATION 2: Compute total sheets from exam data
+        const totalSheets = exams.reduce((sum, exam) => {
+          // Check if generated_sheets exists and is an array
+          if (exam.generated_sheets && Array.isArray(exam.generated_sheets)) {
+            return sum + exam.generated_sheets.reduce((sheetSum, sheet) => 
+              sheetSum + (sheet.sheet_count || 0), 0
+            );
+          }
+          return sum;
+        }, 0);
+        
+        // OPTIMIZATION 3: Get student count from a separate lightweight query
+        // But only if needed (not on every render)
+        let totalStudents = 0;
+        try {
+          const studentsRef = collection(db, 'students');
+          const studentsQuery = query(
+            studentsRef,
+            where('createdBy', '==', user.id)
+          );
+          const studentsSnapshot = await getDocs(studentsQuery);
+          totalStudents = studentsSnapshot.size;
+        } catch (error) {
+          console.log('Students collection not yet available:', error);
+        }
+        
+        console.log('Dashboard data fetched successfully:', {
+          totalExams,
+          recentExams: exams.length,
+          totalStudents,
+          totalSheets
+        });
+        
         setStats({
-          totalExams: exams.length,
-          totalStudents: totalStudents,
-          totalSheets: exams.reduce((sum, exam) => 
-            sum + (exam.generated_sheets?.reduce((s, sheet) => s + (sheet.sheet_count || 0), 0) || 0), 0
-          ),
+          totalExams,
+          totalStudents,
+          totalSheets,
           recentExams: exams.slice(0, 5).map(exam => ({
             id: exam.id,
             title: exam.title,
@@ -86,6 +145,10 @@ export default function Dashboard() {
             created_at: exam.created_at,
           })),
         });
+        
+        // Mark as fetched to prevent duplicate requests
+        hasFetched.current = true;
+        
       } catch (error) {
         console.error('Error fetching stats:', error);
         toast.error('Failed to load dashboard data');
@@ -95,42 +158,55 @@ export default function Dashboard() {
     }
 
     fetchStats();
-  }, [user?.id]);
+    
+    // Cleanup function
+    return () => {
+      // Reset ref if component unmounts
+      hasFetched.current = false;
+    };
+  }, [user?.id]); // Only depend on user.id
 
   const handleCreateExam = async (formData: ExamFormData) => {
-  try {
-    if (!user?.id) {
-      toast.error('You must be logged in to create an exam');
-      return;
+    try {
+      if (!user?.id) {
+        toast.error('You must be logged in to create an exam');
+        return;
+      }
+
+      const newExam = await createExam(formData, user.id);
+
+      // OPTIMIZATION 4: Update stats without refetching
+      setStats(prev => {
+        // Check if exam already exists in recentExams to prevent duplicates
+        const exists = prev.recentExams.some(exam => exam.id === newExam.id);
+        if (exists) return prev;
+        
+        return {
+          ...prev,
+          totalExams: prev.totalExams + 1,
+          recentExams: [
+            {
+              id: newExam.id,
+              title: newExam.title,
+              subject: newExam.subject,
+              num_items: newExam.num_items,
+              created_at: newExam.created_at,
+            },
+            ...prev.recentExams.slice(0, 4)
+          ],
+        };
+      });
+
+      toast.success(`Exam "${formData.name}" created successfully`);
+      setShowCreateModal(false);
+      
+      router.push(`/exams/${newExam.id}`);
+      
+    } catch (error) {
+      console.error('Error creating exam:', error);
+      toast.error('Failed to create exam');
     }
-
-    const newExam = await createExam(formData, user.id);
-
-    setStats(prev => ({
-      ...prev,
-      totalExams: prev.totalExams + 1,
-      recentExams: [
-        {
-          id: newExam.id,
-          title: newExam.title,
-          subject: newExam.subject,
-          num_items: newExam.num_items,
-          created_at: newExam.created_at,
-        },
-        ...prev.recentExams.slice(0, 4)
-      ],
-    }));
-
-    toast.success(`Exam "${formData.name}" created successfully`);
-    setShowCreateModal(false);
-    
-    router.push(`/exams/${newExam.id}`);
-    
-  } catch (error) {
-    console.error('Error creating exam:', error);
-    toast.error('Failed to create exam');
-  }
-};
+  };
 
   const statCards = [
     {
@@ -189,7 +265,11 @@ export default function Dashboard() {
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
                     <p className="text-3xl font-bold mt-1">
-                      {loading ? '-' : stat.value}
+                      {loading ? (
+                        <span className="animate-pulse">...</span>
+                      ) : (
+                        stat.value
+                      )}
                     </p>
                   </div>
                   <div className={`w-12 h-12 rounded-lg ${stat.bgColor} flex items-center justify-center`}>
@@ -203,7 +283,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
+        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-accent" />
@@ -240,7 +320,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200"> {/* Changed default border to #4F7A6B */}
+        <Card className="card-elevated border-2 border-[#4F7A6B] hover:border-[#4F7A6B] transition-colors duration-200">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg flex items-center gap-2">
               <Clock className="w-5 h-5 text-accent" />
@@ -254,11 +334,11 @@ export default function Dashboard() {
             {loading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse border-2 border-[#4F7A6B]" /> /* Changed to #4F7A6B */
+                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse border-2 border-[#4F7A6B]" />
                 ))}
               </div>
             ) : stats.recentExams.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground border-2 border-dashed border-[#4F7A6B] rounded-lg"> {/* Changed to #4F7A6B */}
+              <div className="text-center py-8 text-muted-foreground border-2 border-dashed border-[#4F7A6B] rounded-lg">
                 <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
                 <p>No exams created yet</p>
                 <Button 
@@ -275,7 +355,7 @@ export default function Dashboard() {
                   <Link 
                     key={exam.id} 
                     href={`/exams/${exam.id}`}
-                    className="block p-3 rounded-lg border-2 border-[#4F7A6B] hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200" /* Changed default border to #4F7A6B */
+                    className="block p-3 rounded-lg border-2 border-[#4F7A6B] hover:border-[#4F7A6B] hover:bg-[#4F7A6B]/10 transition-colors duration-200"
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -297,7 +377,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Add the CreateExamModal component */}
       <CreateExamModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}

@@ -12,6 +12,9 @@ const poppins = Poppins({
 export const metadata: Metadata = {
   title: "SIA - Smart Exam Checking & Auto-Grading System",
   description: "A streamlined, paper-based exam checking solution for efficient exam management and automatic grading.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

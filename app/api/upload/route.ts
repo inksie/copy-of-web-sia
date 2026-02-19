@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveLocalFile } from "@/lib/file-storage";
 import { AuditLogger } from "@/services/auditLogger";
-import { getAuth } from "firebase/auth";
 
 // This function handles POST requests to /api/upload
 export async function POST(request: NextRequest) {

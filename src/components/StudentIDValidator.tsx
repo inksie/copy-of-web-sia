@@ -1,8 +1,3 @@
-/**
- * Student ID Validation Component
- * Provides UI feedback for duplicate/missing Student ID validation
- */
-
 'use client';
 
 import { useEffect, useState } from 'react';

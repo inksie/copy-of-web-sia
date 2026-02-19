@@ -1,10 +1,3 @@
-/**
- * Duplicate Detection Service
- * Detects duplicate student records during upload by comparing:
- * - Student ID (primary key)
- * - Email addresses
- * - Name + First Name combinations
- */
 
 import {
   collection,

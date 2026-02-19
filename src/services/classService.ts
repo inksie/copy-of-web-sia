@@ -70,6 +70,32 @@ export async function createClass(classData: Omit<Class, 'id'>, userId: string):
 }
 
 /**
+ * Get total student count for a user (lightweight - for dashboard)
+ * Uses client-side filtering to avoid composite index requirement
+ */
+export async function getTotalStudentCount(userId: string): Promise<number> {
+  try {
+    // Fetch all classes without filters to avoid composite index
+    const q = query(collection(db, CLASSES_COLLECTION));
+    const querySnapshot = await getDocs(q);
+    let totalStudents = 0;
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data() as any;
+      // Filter by userId on client-side
+      if (data.createdBy === userId) {
+        totalStudents += (data.students?.length || 0);
+      }
+    });
+
+    return totalStudents;
+  } catch (error: any) {
+    console.error('Error fetching student count:', error);
+    return 0;
+  }
+}
+
+/**
  * Get all classes for a user
  */
 export async function getClasses(userId?: string): Promise<Class[]> {

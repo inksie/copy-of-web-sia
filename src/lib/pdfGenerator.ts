@@ -6,7 +6,7 @@ interface Exam {
   subject: string;
   num_items: number;
   choices_per_item: number;
-  student_id_length: number;
+  student_id_length?: number;
 }
 
 export async function generateAnswerSheetPDF(exam: Exam, copies: number = 1) {
@@ -53,7 +53,8 @@ export async function generateAnswerSheetPDF(exam: Exam, copies: number = 1) {
 
     // Student ID bubbles
     const idStartX = margin;
-    for (let digit = 0; digit < exam.student_id_length; digit++) {
+    const idLength = exam.student_id_length ?? 8;
+    for (let digit = 0; digit < idLength; digit++) {
       const x = idStartX + digit * (bubbleSpacing + bubbleRadius * 2);
       
       // Column header

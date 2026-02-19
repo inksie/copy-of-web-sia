@@ -1,11 +1,3 @@
-/**
- * Duplicate Review Dialog
- * Displays detected duplicate records and allows admin to:
- * - Review each duplicate with side-by-side comparison
- * - Skip duplicates (don't import)
- * - Force import (override duplicates)
- */
-
 'use client';
 
 import { useState } from 'react';
