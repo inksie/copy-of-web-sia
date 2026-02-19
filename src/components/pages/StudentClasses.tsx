@@ -42,6 +42,8 @@ import * as XLSX from 'xlsx';
 import { StudentIDService } from '@/services/studentIDService';
 import { IDChangeLogger } from '@/services/idChangeLogger';
 import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
+import { DataQualityService } from '@/services/dataQualityService';
+import { DataQualityDisplay } from '@/components/validation/DataQualityDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Search, 
@@ -93,6 +95,8 @@ export default function StudentClasses() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [validationErrors, setValidationErrors] = useState<any>(null);
   const [showValidationError, setShowValidationError] = useState(false);
+  const [dataQualityResult, setDataQualityResult] = useState<any>(null);
+  const [showDataQualityDialog, setShowDataQualityDialog] = useState(false);
   
   const [newClass, setNewClass] = useState({
     class_name: '',
@@ -328,7 +332,15 @@ export default function StudentClasses() {
             return;
           }
 
-          const idAssignmentResult = await StudentIDService.bulkImportStudents(validStudents, true);
+          // Check for duplicates and inconsistencies
+          const qualityResult = DataQualityService.checkDataQuality(validStudents);
+          
+          if (!qualityResult.isClean) {
+            setDataQualityResult(qualityResult);
+            setShowDataQualityDialog(true);
+            setImporting(false);
+            return;
+          }
           if (!idAssignmentResult.success) {
             toast.error(idAssignmentResult.error || 'Failed to auto-generate IDs for import');
             setImporting(false);
@@ -903,6 +915,67 @@ export default function StudentClasses() {
               </Button>
             )}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Data Quality Check Dialog */}
+      <Dialog open={showDataQualityDialog} onOpenChange={setShowDataQualityDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Data Quality Issues Detected</DialogTitle>
+            <DialogDescription>
+              Review duplicates and inconsistencies before proceeding with the import
+            </DialogDescription>
+          </DialogHeader>
+
+          {dataQualityResult && (
+            <DataQualityDisplay
+              result={dataQualityResult}
+              onCancel={() => {
+                setShowDataQualityDialog(false);
+                setDataQualityResult(null);
+                setImportPreview([]);
+              }}
+              onProceed={async () => {
+                // Proceed with import despite quality issues
+                const idAssignmentResult = await StudentIDService.bulkImportStudents(importPreview, true);
+                if (!idAssignmentResult.success) {
+                  toast.error(idAssignmentResult.error || 'Failed to auto-generate IDs for import');
+                  setShowDataQualityDialog(false);
+                  return;
+                }
+
+                // Continue with rest of import logic
+                let generatedIndex = 0;
+                const studentsWithIds: Student[] = importPreview.map((row) => {
+                  const existingId = row.student_id.trim();
+                  if (existingId) {
+                    return {
+                      student_id: existingId,
+                      first_name: row.first_name,
+                      last_name: row.last_name,
+                      email: row.email || undefined,
+                    };
+                  }
+
+                  const generatedId = idAssignmentResult.ids?.[generatedIndex++];
+                  return {
+                    student_id: generatedId || '',
+                    first_name: row.first_name,
+                    last_name: row.last_name,
+                    email: row.email || undefined,
+                  };
+                });
+
+                setStudents([...students, ...studentsWithIds]);
+                setImportPreview([]);
+                setShowDataQualityDialog(false);
+                setShowImportDialog(false);
+                toast.success(`Imported ${studentsWithIds.length} students`);
+              }}
+              allowOverride={dataQualityResult.summary.highSeverityCount === 0}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
