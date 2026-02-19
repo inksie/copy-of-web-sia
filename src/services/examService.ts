@@ -148,10 +148,7 @@ export async function getRecentExams(userId: string, limit: number = 5): Promise
   }
 }
 
-/**
- * Get exam count for a user (lightweight)
- * Uses client-side filtering to avoid composite index requirement
- */
+
 export async function getExamCount(userId: string): Promise<number> {
   try {
     // Fetch all exams without filters to avoid composite index
@@ -302,9 +299,7 @@ export async function archiveExam(examId: string): Promise<void> {
   }
 }
 
-/**
- * Get archived exams for a user
- */
+
 export async function getArchivedExams(userId: string): Promise<Exam[]> {
   try {
     // Use where clause to filter by userId and isArchived to minimize data read
