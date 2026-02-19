@@ -44,9 +44,8 @@ import { IDChangeLogger } from '@/services/idChangeLogger';
 import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
 import { DataQualityService } from '@/services/dataQualityService';
 import { OfficialRecordService } from '@/services/officialRecordService';
-import { ValidationGuardService } from '@/services/validationGuardService';
+import { StudentFileUploadService } from '@/services/studentFileUploadService';
 import { DataQualityDisplay } from '@/components/validation/DataQualityDisplay';
-import { ValidationStatusBadge } from '@/components/validation/OfficialRecordGuard';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   Search, 
@@ -96,8 +95,6 @@ export default function StudentClasses() {
   const [importing, setImporting] = useState(false);
   const [importPreview, setImportPreview] = useState<Student[]>([]);
   const [showImportDialog, setShowImportDialog] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<any>(null);
-  const [showValidationError, setShowValidationError] = useState(false);
   const [dataQualityResult, setDataQualityResult] = useState<any>(null);
   const [showDataQualityDialog, setShowDataQualityDialog] = useState(false);
   
@@ -300,8 +297,6 @@ export default function StudentClasses() {
     event.target.value = '';
 
     setImporting(true);
-    setValidationErrors(null);
-    setShowValidationError(false);
 
     try {
       const reader = new FileReader();
@@ -327,13 +322,8 @@ export default function StudentClasses() {
           // Validate all records for required fields
           const validationResult = StudentFieldValidationService.validateBulkRecords(parsedStudents);
 
-          if (validationResult.invalid > 0) {
-            setValidationErrors({
-              invalidRecords: validationResult.invalidRecords,
-              summary: validationResult.summary,
-            });
-            setShowValidationError(true);
-            toast.error(`${validationResult.invalid} of ${validationResult.total} records have validation errors`);
+          if (validationResult.summary.invalid > 0) {
+            toast.error(`${validationResult.summary.invalid} of ${validationResult.summary.total} records have validation errors`);
             setImporting(false);
             return;
           }
@@ -355,15 +345,31 @@ export default function StudentClasses() {
             setImporting(false);
             return;
           }
-          if (!idAssignmentResult.success) {
-            toast.error(idAssignmentResult.error || 'Failed to auto-generate IDs for import');
-            setImporting(false);
-            return;
+
+          // Auto-assign IDs for students without them
+          const studentsNeedingIds = validStudents.filter((s) => !s.student_id || s.student_id.trim() === '') as Array<{
+            rowIndex: number;
+            student_id: string;
+            first_name: string;
+            last_name: string;
+            email?: string;
+            [key: string]: any;
+          }>;
+          let idAssignmentResult = { success: true, ids: [] as string[] };
+          
+          if (studentsNeedingIds.length > 0) {
+            const assignmentResult = await StudentIDService.autoAssignIDs(studentsNeedingIds);
+            if (!assignmentResult.success) {
+              toast.error(assignmentResult.error || 'Failed to auto-generate IDs for import');
+              setImporting(false);
+              return;
+            }
+            idAssignmentResult = { success: true, ids: assignmentResult.ids || [] };
           }
 
           let generatedIndex = 0;
           const studentsWithIds: Student[] = validStudents.map((row) => {
-            const existingId = row.student_id.trim();
+            const existingId = row.student_id?.trim();
             if (existingId) {
               return {
                 student_id: existingId,
@@ -512,25 +518,7 @@ export default function StudentClasses() {
   };
 
   const downloadTemplate = () => {
-    const template = [
-      {
-        student_id: '',
-        first_name: 'Juan',
-        last_name: 'Dela Cruz',
-        email: 'juan.delacruz@example.com',
-      },
-      {
-        student_id: 'STU00001',
-        first_name: 'Maria',
-        last_name: 'Santos',
-        email: 'maria.santos@example.com',
-      },
-    ];
-
-    const worksheet = XLSX.utils.json_to_sheet(template);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Students');
-    XLSX.writeFile(workbook, 'student_classes_template.xlsx');
+    StudentFileUploadService.downloadTemplate('xlsx');
   };
 
   const filteredClasses = classes.filter(c =>
