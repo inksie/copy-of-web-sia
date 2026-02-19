@@ -40,6 +40,8 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { StudentIDService } from '@/services/studentIDService';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { 
   Search, 
   Plus, 
@@ -109,24 +111,32 @@ export default function StudentClasses() {
 
   const fetchClasses = async () => {
     try {
-      // TODO: Fetch from Firestore
-      // For now, using mock data
-      const mockClasses: Class[] = [
-        {
-          id: '1',
-          class_name: 'Computer Science 101',
-          course_subject: 'Introduction to Programming',
-          section_block: 'A',
-          room: 'Room 301',
-          
-          students: [
-            { student_id: '2021001', first_name: 'John', last_name: 'Doe', email: 'john.doe@example.com' },
-            { student_id: '2021002', first_name: 'Jane', last_name: 'Smith', email: 'jane.smith@example.com' },
-          ],
-          created_at: new Date().toISOString(),
-        },
-      ];
-      setClasses(mockClasses);
+      const snapshot = await getDocs(collection(db, 'classes'));
+      const fetchedClasses: Class[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() as Record<string, any>;
+        const createdAtValue = data.created_at ?? data.createdAt;
+
+        return {
+          id: docSnap.id,
+          class_name: data.class_name ?? '',
+          course_subject: data.course_subject ?? '',
+          section_block: data.section_block ?? '',
+          room: data.room ?? '',
+          students: Array.isArray(data.students) ? data.students : [],
+          created_at:
+            typeof createdAtValue?.toDate === 'function'
+              ? createdAtValue.toDate().toISOString()
+              : typeof createdAtValue === 'string'
+                ? createdAtValue
+                : new Date().toISOString(),
+          schedule_day: data.schedule_day,
+          schedule_time: data.schedule_time,
+          semester: data.semester,
+          school_year: data.school_year,
+        };
+      });
+
+      setClasses(fetchedClasses);
     } catch (error) {
       console.error('Error fetching classes:', error);
       toast.error('Failed to load classes');
@@ -404,6 +414,7 @@ export default function StudentClasses() {
   };
 
   const downloadTemplate = () => {
+    const currentYear = new Date().getFullYear();
     const template = [
       {
         student_id: '',
@@ -412,7 +423,7 @@ export default function StudentClasses() {
         email: 'juan.delacruz@example.com',
       },
       {
-        student_id: 'STU00001',
+        student_id: `${currentYear}-0001`,
         first_name: 'Maria',
         last_name: 'Santos',
         email: 'maria.santos@example.com',
