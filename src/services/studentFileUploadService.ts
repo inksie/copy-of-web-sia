@@ -256,7 +256,7 @@ export class StudentFileUploadService {
         section: 'A',
       },
       {
-        student_id: 'STU00001',
+        student_id: '2026-0001',
         first_name: 'Maria',
         last_name: 'Santos',
         email: 'maria.santos@example.com',

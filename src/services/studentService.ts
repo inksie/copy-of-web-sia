@@ -11,6 +11,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { StudentIDValidationService } from './studentIDValidationService';
+import {
+  validateCreateStudentInput,
+  validateUpdateStudentInput,
+} from '@/middleware/studentValidationMiddleware';
 
 export interface StudentRecord {
   student_id: string; // PRIMARY KEY
@@ -119,29 +123,18 @@ export class StudentService {
     created_by: string,
     section?: string
   ): Promise<StudentRecord> {
-    // Validate student record
-    const recordValidation = await StudentIDValidationService.validateStudentRecord(
+    const { normalizedStudentId } = await validateCreateStudentInput({
       student_id,
       first_name,
-      last_name
-    );
-
-    if (!recordValidation.isValid) {
-      throw new Error(`Validation failed: ${recordValidation.errors.join('; ')}`);
-    }
-
-    // Validate student ID specifically
-    const idValidation = await StudentIDValidationService.validateStudentId(student_id);
-    if (!idValidation.isValid) {
-      throw new Error(idValidation.error || 'Invalid student ID');
-    }
+      last_name,
+    });
 
     // Check if student already exists (prevent duplicates)
     try {
-      const existingStudent = await this.getStudentById(student_id);
+      const existingStudent = await this.getStudentById(normalizedStudentId);
       if (existingStudent) {
         throw new Error(
-          `Student ID "${student_id}" already exists in the system. ` +
+          `Student ID "${normalizedStudentId}" already exists in the system. ` +
           `Existing student: ${existingStudent.first_name} ${existingStudent.last_name} ` +
           `(created: ${new Date(existingStudent.created_at).toLocaleDateString()})`
         );
@@ -157,7 +150,7 @@ export class StudentService {
 
     const now = new Date().toISOString();
     const studentRecord: StudentRecord = {
-      student_id,
+      student_id: normalizedStudentId,
       first_name,
       last_name,
       email,
@@ -174,7 +167,7 @@ export class StudentService {
       );
 
       // Use student_id as the document ID for efficient queries
-      await setDoc(doc(db, STUDENTS_COLLECTION, student_id), {
+      await setDoc(doc(db, STUDENTS_COLLECTION, normalizedStudentId), {
         ...cleanStudentRecord,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
@@ -192,7 +185,12 @@ export class StudentService {
    */
   static async getStudentById(student_id: string): Promise<StudentRecord | null> {
     try {
-      const docSnap = await getDoc(doc(db, STUDENTS_COLLECTION, student_id));
+      const normalizedStudentId = (student_id || '').trim();
+      if (!normalizedStudentId) {
+        return null;
+      }
+
+      const docSnap = await getDoc(doc(db, STUDENTS_COLLECTION, normalizedStudentId));
       return docSnap.exists() ? (docSnap.data() as StudentRecord) : null;
     } catch (error) {
       console.error(`Error fetching student ${student_id}:`, error);
@@ -208,6 +206,11 @@ export class StudentService {
     updates: Partial<StudentRecord>
   ): Promise<StudentRecord> {
     try {
+      const normalizedStudentId = validateUpdateStudentInput({
+        currentStudentId: student_id,
+        requestedStudentId: updates.student_id,
+      });
+
       // Don't allow changing student_id (primary key)
       const { student_id: _, ...safeUpdates } = updates;
 
@@ -216,10 +219,10 @@ export class StudentService {
         updated_at: serverTimestamp(),
       };
 
-      await updateDoc(doc(db, STUDENTS_COLLECTION, student_id), updateData);
+      await updateDoc(doc(db, STUDENTS_COLLECTION, normalizedStudentId), updateData);
 
       // Return updated record
-      const updated = await this.getStudentById(student_id);
+      const updated = await this.getStudentById(normalizedStudentId);
       if (!updated) {
         throw new Error('Failed to retrieve updated student record');
       }
@@ -430,17 +433,14 @@ export class StudentService {
     isValid: boolean;
     message?: string;
   }> {
-    if (!student_id || !student_id.trim()) {
-      return { isValid: false, message: 'Student ID cannot be empty' };
+    const formatValidation = StudentIDValidationService.validateStudentIdFormat(student_id);
+    if (!formatValidation.isValid) {
+      return { isValid: false, message: formatValidation.error || 'Invalid student ID format' };
     }
 
-    if (student_id.length < 3) {
-      return { isValid: false, message: 'Student ID must be at least 3 characters' };
-    }
-
-    const existing = await this.getStudentById(student_id);
+    const existing = await this.getStudentById(formatValidation.student_id);
     if (existing) {
-      return { isValid: false, message: `Student ID "${student_id}" already exists` };
+      return { isValid: false, message: `Student ID "${formatValidation.student_id}" already exists` };
     }
 
     return { isValid: true };

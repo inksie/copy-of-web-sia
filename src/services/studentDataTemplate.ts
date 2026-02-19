@@ -30,10 +30,10 @@ export const STUDENT_DATA_TEMPLATE_INFO = {
       name: 'student_id',
       required: false,
       description: 'Unique student identifier',
-      format: 'Alphanumeric (STU00001, 2024-001, etc)',
-      example: 'STU00001',
+      format: 'YYYY-XXXX (e.g., 2026-0001)',
+      example: '2026-0001',
       autoGenerate: true,
-      note: 'Leave empty to auto-generate sequential IDs',
+      note: 'Leave empty to auto-generate IDs in YYYY-XXXX format',
     },
     first_name: {
       name: 'first_name',
@@ -98,7 +98,7 @@ export const STUDENT_DATA_TEMPLATE_INFO = {
   validationRules: {
     required: ['first_name', 'last_name', 'year', 'section'],
     format: {
-      student_id: 'Alphanumeric',
+      student_id: 'YYYY-XXXX',
       first_name: 'Letters only, 2-50 characters',
       last_name: 'Letters only, 2-50 characters',
       email: 'Valid email format',
@@ -122,7 +122,7 @@ export const STUDENT_DATA_TEMPLATE_INFO = {
       block: 'STEM',
     },
     {
-      student_id: 'STU00001',
+      student_id: '2026-0001',
       first_name: 'Maria',
       last_name: 'Santos',
       email: 'maria.santos@example.com',
@@ -131,7 +131,7 @@ export const STUDENT_DATA_TEMPLATE_INFO = {
       block: 'HUMSS',
     },
     {
-      student_id: 'STU00002',
+      student_id: '2026-0002',
       first_name: 'Carlos',
       last_name: 'Rodriguez',
       email: 'carlos.rodriguez@example.com',

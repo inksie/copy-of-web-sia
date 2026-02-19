@@ -48,9 +48,9 @@ export class StudentIDValidationService {
   }> = [];
 
   /**
-   * Validate a single student ID
+   * Validate student ID format only (without duplicate checks)
    */
-  static async validateStudentId(student_id: string | null | undefined): Promise<StudentIDValidation> {
+  static validateStudentIdFormat(student_id: string | null | undefined): StudentIDValidation {
     const result: StudentIDValidation = {
       student_id: student_id || '',
       isValid: false,
@@ -60,7 +60,7 @@ export class StudentIDValidationService {
     if (!student_id || typeof student_id !== 'string') {
       result.isEmpty = true;
       result.error = 'Student ID is required and cannot be empty or null';
-      this.logValidation('validate_single', student_id || 'NULL', 'FAILED', result.error);
+      this.logValidation('validate_format', student_id || 'NULL', 'FAILED', result.error);
       return result;
     }
 
@@ -70,55 +70,70 @@ export class StudentIDValidationService {
     if (trimmedId.length === 0) {
       result.isEmpty = true;
       result.error = 'Student ID cannot contain only whitespace';
-      this.logValidation('validate_single', student_id, 'FAILED', result.error);
+      this.logValidation('validate_format', student_id, 'FAILED', result.error);
       return result;
     }
 
     // Check length constraints
     if (trimmedId.length < this.MIN_ID_LENGTH) {
       result.error = `Student ID must be at least ${this.MIN_ID_LENGTH} character(s)`;
-      this.logValidation('validate_single', student_id, 'FAILED', result.error);
+      this.logValidation('validate_format', student_id, 'FAILED', result.error);
       return result;
     }
 
     if (trimmedId.length > this.MAX_ID_LENGTH) {
       result.error = `Student ID must not exceed ${this.MAX_ID_LENGTH} characters`;
-      this.logValidation('validate_single', student_id, 'FAILED', result.error);
+      this.logValidation('validate_format', student_id, 'FAILED', result.error);
       return result;
     }
 
     // Enforce strict format: YYYY-XXXX (e.g., 2026-0001)
     if (!this.STUDENT_ID_PATTERN.test(trimmedId)) {
       result.error = 'Student ID must follow YYYY-XXXX format (e.g., 2026-0001)';
-      this.logValidation('validate_single', student_id, 'FAILED', result.error);
+      this.logValidation('validate_format', student_id, 'FAILED', result.error);
       return result;
     }
 
     const sequenceNumber = Number(trimmedId.split('-')[1]);
     if (sequenceNumber < 1) {
       result.error = 'Student ID sequence must be between 0001 and 9999';
-      this.logValidation('validate_single', student_id, 'FAILED', result.error);
-      return result;
-    }
-
-    // Check for duplicate
-    try {
-      const existing = await StudentService.getStudentById(trimmedId);
-      if (existing) {
-        result.isDuplicate = true;
-        result.error = `Student ID "${trimmedId}" already exists in the system`;
-        this.logValidation('validate_single', student_id, 'DUPLICATE', result.error);
-        return result;
-      }
-    } catch (error) {
-      result.error = `Error checking for duplicate: ${(error as Error).message}`;
-      this.logValidation('validate_single', student_id, 'ERROR', result.error);
+      this.logValidation('validate_format', student_id, 'FAILED', result.error);
       return result;
     }
 
     result.isValid = true;
     result.student_id = trimmedId;
-    this.logValidation('validate_single', student_id, 'PASSED', 'Student ID is valid');
+    this.logValidation('validate_format', student_id, 'PASSED', 'Student ID format is valid');
+    return result;
+  }
+
+  /**
+   * Validate a single student ID (format + uniqueness)
+   */
+  static async validateStudentId(student_id: string | null | undefined): Promise<StudentIDValidation> {
+    const result = this.validateStudentIdFormat(student_id);
+    if (!result.isValid) {
+      return result;
+    }
+
+    // Check for duplicate
+    try {
+      const existing = await StudentService.getStudentById(result.student_id);
+      if (existing) {
+        result.isValid = false;
+        result.isDuplicate = true;
+        result.error = `Student ID "${result.student_id}" already exists in the system`;
+        this.logValidation('validate_single', student_id || 'NULL', 'DUPLICATE', result.error);
+        return result;
+      }
+    } catch (error) {
+      result.isValid = false;
+      result.error = `Error checking for duplicate: ${(error as Error).message}`;
+      this.logValidation('validate_single', student_id || 'NULL', 'ERROR', result.error);
+      return result;
+    }
+
+    this.logValidation('validate_single', student_id || 'NULL', 'PASSED', 'Student ID is valid');
     return result;
   }
 

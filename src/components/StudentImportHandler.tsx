@@ -321,8 +321,8 @@ export function StudentImportHandler({
         <ul className="text-sm space-y-1 text-gray-700">
           <li>📋 Column headers: <code className="bg-gray-100 px-2 py-1">Student ID</code>, <code className="bg-gray-100 px-2 py-1">First Name</code>, <code className="bg-gray-100 px-2 py-1">Last Name</code>, <code className="bg-gray-100 px-2 py-1">Email</code> (optional)</li>
           <li>✓ Student ID must be unique and not empty</li>
-          <li>✓ Allowed characters: letters, numbers, hyphens, underscores</li>
-          <li>✓ Max 50 characters per Student ID</li>
+          <li>✓ Student ID format: <code className="bg-gray-100 px-2 py-1">YYYY-XXXX</code> (example: <code className="bg-gray-100 px-2 py-1">2026-0001</code>)</li>
+          <li>✓ Sequence must be between 0001 and 9999</li>
           <li>✓ First and Last names are required</li>
         </ul>
       </div>
