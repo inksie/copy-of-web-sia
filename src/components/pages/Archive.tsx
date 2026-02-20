@@ -3,11 +3,22 @@
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Archive as ArchiveIcon, Search, FileText, Eye } from 'lucide-react';
+import { Archive as ArchiveIcon, Search, FileText, Eye, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getArchivedExams, type Exam } from '@/services/examService';
+import { getArchivedExams, type Exam, deleteExam } from '@/services/examService';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Table,
   TableBody,
@@ -22,6 +33,7 @@ export default function Archive() {
   const [archivedExams, setArchivedExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchArchivedExams = async () => {
@@ -49,6 +61,20 @@ export default function Archive() {
       exam.title.toLowerCase().includes(search.toLowerCase()) ||
       exam.subject.toLowerCase().includes(search.toLowerCase()),
   );
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+
+    try {
+      await deleteExam(deleteId);
+      setArchivedExams(archivedExams.filter(e => e.id !== deleteId));
+      setDeleteId(null);
+      toast.success('Archived exam deleted successfully');
+    } catch (error) {
+      console.error('Error deleting exam:', error);
+      toast.error('Failed to delete archived exam');
+    }
+  };
 
   return (
     <div className="page-container">
@@ -132,6 +158,14 @@ export default function Archive() {
                           <Eye className="w-4 h-4" />
                         </Button>
                       </Link>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => setDeleteId(exam.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -162,6 +196,24 @@ export default function Archive() {
           </p>
         </Card>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Archived Exam</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this archived exam? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

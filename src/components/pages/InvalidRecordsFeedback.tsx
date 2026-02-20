@@ -1,9 +1,3 @@
-/**
- * Invalid Records Feedback Component
- * Displays flagged invalid records in admin UI
- * Shows validation errors, record details, and filtering options
- */
-
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -92,8 +86,7 @@ export default function InvalidRecordsFeedback() {
     const endIndex = startIndex + pageSize;
     return invalidRecords.slice(startIndex, endIndex);
   };
-
-  const totalPages = Math.ceil(invalidRecords.length / pageSize);
+    const totalPages = Math.ceil(invalidRecords.length / pageSize);
 
   const getRecordTypeColor = (type: string) => {
     switch (type) {

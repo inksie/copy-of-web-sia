@@ -5,7 +5,6 @@ import {
   getDoc,
   getDocs,
   updateDoc,
-  deleteDoc,
   query,
   where,
   serverTimestamp,
@@ -112,8 +111,8 @@ export async function getRecentExams(userId: string, limit: number = 5): Promise
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      // Filter by userId on client-side
-      if (data.createdBy === userId) {
+      // Filter by userId on client-side and exclude archived exams
+      if (data.createdBy === userId && !data.isArchived) {
         exams.push({
           id: doc.id,
           title: data.title,
@@ -130,6 +129,7 @@ export async function getRecentExams(userId: string, limit: number = 5): Promise
           updatedAt:
             data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
           className: data.className || undefined,
+          isArchived: data.isArchived,
         });
       }
     });
@@ -158,8 +158,8 @@ export async function getExamCount(userId: string): Promise<number> {
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      // Filter by userId on client-side
-      if (data.createdBy === userId) {
+      // Filter by userId on client-side and exclude archived exams
+      if (data.createdBy === userId && !data.isArchived) {
         count++;
       }
     });
@@ -187,7 +187,8 @@ export async function getExams(userId?: string): Promise<Exam[]> {
     querySnapshot.forEach((doc) => {
       const data = doc.data();
       // Filter by userId if provided (additional client-side check)
-      if (!userId || data.createdBy === userId) {
+      // Also filter out archived exams
+      if ((!userId || data.createdBy === userId) && !data.isArchived) {
         exams.push({
           id: doc.id,
           title: data.title,
@@ -204,6 +205,7 @@ export async function getExams(userId?: string): Promise<Exam[]> {
           updatedAt:
             data.updatedAt?.toDate?.().toISOString() || new Date().toISOString(),
           className: data.className || undefined,
+          isArchived: data.isArchived,
         });
       }
     });
@@ -355,7 +357,12 @@ export async function getArchivedExams(userId: string): Promise<Exam[]> {
 export async function deleteExam(examId: string): Promise<void> {
   try {
     const docRef = doc(db, "exams", examId);
-    await deleteDoc(docRef);
+    // Instead of deleting the document, set isArchived to false and mark as deleted
+    await updateDoc(docRef, {
+      isArchived: false,
+      deletedAt: new Date().toISOString(),
+      status: 'deleted'
+    });
   } catch (error) {
     console.error("Error deleting exam:", error);
     throw new Error("Failed to delete exam");

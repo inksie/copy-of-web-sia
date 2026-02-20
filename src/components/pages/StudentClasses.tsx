@@ -46,7 +46,7 @@ import { OfficialRecordService } from '@/services/officialRecordService';
 import { IDChangeLogger } from '@/services/idChangeLogger';
 import { StudentFieldValidationService } from '@/services/studentFieldValidationService';
 import { DataQualityService } from '@/services/dataQualityService';
-import { collection, getDocs, doc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { 
   Search, 
@@ -92,6 +92,7 @@ export default function StudentClasses() {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState('basic');
   const [importing, setImporting] = useState(false);
   const [importPreview, setImportPreview] = useState<Student[]>([]);
@@ -160,8 +161,35 @@ export default function StudentClasses() {
   };
 
   const handleAddClass = async () => {
-    if (!newClass.class_name || !newClass.course_subject || !newClass.section_block) {
-      toast.error('Please fill in all required fields');
+    // Validation for Class Name - letters only
+    if (!newClass.class_name.trim()) {
+      toast.error('Class Name is required');
+      return;
+    }
+    if (!/^[a-zA-Z\s]+$/.test(newClass.class_name.trim())) {
+      toast.warning('Class Name must contain letters only');
+      return;
+    }
+
+    // Validation for Course/Subject - required
+    if (!newClass.course_subject.trim()) {
+      toast.error('Course/Subject is required');
+      return;
+    }
+
+    // Validation for Block - required
+    if (!newClass.section_block) {
+      toast.error('Block/Section is required');
+      return;
+    }
+
+    // Validation for Room - numbers only
+    if (!newClass.room.trim()) {
+      toast.warning('Room number is required');
+      return;
+    }
+    if (!/^\d+$/.test(newClass.room.trim())) {
+      toast.warning('Room must contain numbers only');
       return;
     }
 
@@ -171,41 +199,82 @@ export default function StudentClasses() {
     }
 
     try {
-      const classToAdd: Omit<Class, 'id'> = {
-        ...newClass,
-        students: students,
-        created_at: new Date().toISOString(),
-      };
+      if (editingClassId) {
+        // UPDATE existing class
+        const { updateClass } = await import('@/services/classService');
+        
+        await updateClass(editingClassId, {
+          ...newClass,
+          students: students,
+        });
 
-      // Save to Firestore
-      const savedClass = await createClass(classToAdd, user.id);
-      
-      // CRITICAL: Also save individual student records to the students collection
-      if (students.length > 0) {
-        try {
-          const { setDoc } = await import('firebase/firestore');
-          const { db } = await import('@/lib/firebase');
-          
-          for (const student of students) {
-            const studentDocRef = doc(db, 'students', student.student_id);
-            await setDoc(studentDocRef, {
-              student_id: student.student_id,
-              first_name: student.first_name,
-              last_name: student.last_name,
-              email: student.email || null,
-              created_by: user.id,
-              class_id: savedClass.id,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }, { merge: true });
+        // Update individual student records in the students collection
+        if (students.length > 0) {
+          try {
+            for (const student of students) {
+              const studentDocRef = doc(db, 'students', student.student_id);
+              await setDoc(studentDocRef, {
+                student_id: student.student_id,
+                first_name: student.first_name,
+                last_name: student.last_name,
+                email: student.email || null,
+                created_by: user.id,
+                class_id: editingClassId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }, { merge: true });
+            }
+          } catch (error) {
+            console.error('Error updating students in Firestore:', error);
+            toast.error('Failed to save student records: ' + (error instanceof Error ? error.message : String(error)));
           }
-        } catch (error) {
-          console.error('Error saving students to Firestore:', error);
-          toast.warning('Class created but failed to save all student records');
         }
+
+        // Update the classes list in state
+        setClasses(classes.map(c => 
+          c.id === editingClassId 
+            ? { ...c, ...newClass, students }
+            : c
+        ));
+
+        setEditingClassId(null);
+        toast.success('Class updated successfully');
+      } else {
+        // CREATE new class
+        const classToAdd: Omit<Class, 'id'> = {
+          ...newClass,
+          students: students,
+          created_at: new Date().toISOString(),
+        };
+
+        // Save to Firestore
+        const savedClass = await createClass(classToAdd, user.id);
+        
+        // CRITICAL: Also save individual student records to the students collection
+        if (students.length > 0) {
+          try {
+            for (const student of students) {
+              const studentDocRef = doc(db, 'students', student.student_id);
+              await setDoc(studentDocRef, {
+                student_id: student.student_id,
+                first_name: student.first_name,
+                last_name: student.last_name,
+                email: student.email || null,
+                created_by: user.id,
+                class_id: savedClass.id,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }, { merge: true });
+            }
+          } catch (error) {
+            console.error('Error saving students to Firestore:', error);
+            toast.error('Failed to save student records: ' + (error instanceof Error ? error.message : String(error)));
+          }
+        }
+        
+        setClasses([...classes, savedClass]);
+        toast.success('Class added and saved successfully');
       }
-      
-      setClasses([...classes, savedClass]);
       
       setShowAddDialog(false);
       setNewClass({
@@ -240,13 +309,56 @@ export default function StudentClasses() {
   };
 
   const handleAddStudent = async () => {
-    if (!newStudent.first_name.trim() || !newStudent.last_name.trim()) {
-      toast.error('Please fill in first name and last name');
+    // Validation for First Name - letters only, more than 3 letters
+    if (!newStudent.first_name.trim()) {
+      toast.error('First name is required');
       return;
+    }
+    if (!/^[a-zA-Z\s]+$/.test(newStudent.first_name.trim())) {
+      toast.warning('First name must contain letters only');
+      return;
+    }
+    if (newStudent.first_name.trim().length < 4) {
+      toast.warning('First name must be at least 4 characters');
+      return;
+    }
+
+    // Validation for Last Name - letters only, more than 3 letters
+    if (!newStudent.last_name.trim()) {
+      toast.error('Last name is required');
+      return;
+    }
+    if (!/^[a-zA-Z\s]+$/.test(newStudent.last_name.trim())) {
+      toast.warning('Last name must contain letters only');
+      return;
+    }
+    if (newStudent.last_name.trim().length < 4) {
+      toast.warning('Last name must be at least 4 characters');
+      return;
+    }
+
+    // Validation for Email - optional but if provided must be valid gmail
+    if (newStudent.email.trim()) {
+      if (!newStudent.email.trim().includes('@gmail.com')) {
+        toast.warning('Email must be a valid Gmail address (@gmail.com)');
+        return;
+      }
     }
 
     let studentId = newStudent.student_id.trim();
     const wasAutoGenerated = !studentId;
+
+    // Validation for Student ID - 9 digits and must start with 20
+    if (studentId) {
+      if (!/^\d{9}$/.test(studentId)) {
+        toast.warning('Student ID must be exactly 9 digits');
+        return;
+      }
+      if (!studentId.startsWith('20')) {
+        toast.warning('Student ID must start with 20');
+        return;
+      }
+    }
 
     // Auto-generate when Student ID is not provided
     if (!studentId) {
@@ -304,9 +416,6 @@ export default function StudentClasses() {
     // CRITICAL: Save individual student record to the students collection if we have a selected class
     if (user && selectedClass) {
       try {
-        const { setDoc } = await import('firebase/firestore');
-        const { db } = await import('@/lib/firebase');
-        
         const studentDocRef = doc(db, 'students', student.student_id);
         await setDoc(studentDocRef, {
           student_id: student.student_id,
@@ -320,7 +429,7 @@ export default function StudentClasses() {
         }, { merge: true });
       } catch (error) {
         console.error('Error saving student to Firestore:', error);
-        toast.warning('Student added to roster but failed to save to database');
+        toast.error('Failed to save student to database: ' + (error instanceof Error ? error.message : String(error)));
       }
     }
     
@@ -570,9 +679,6 @@ export default function StudentClasses() {
         });
 
         // Also create individual student records in the students collection
-        const { setDoc } = await import('firebase/firestore');
-        const { db } = await import('@/lib/firebase');
-        
         for (const student of importPreview) {
           const studentDocRef = doc(db, 'students', student.student_id);
           await setDoc(studentDocRef, {
@@ -588,7 +694,7 @@ export default function StudentClasses() {
         }
       } catch (error) {
         console.error('Error saving students to Firestore:', error);
-        toast.error('Failed to save students to database');
+        toast.error('Failed to save students to database: ' + (error instanceof Error ? error.message : String(error)));
         return;
       }
     }
@@ -816,6 +922,7 @@ export default function StudentClasses() {
                     onChange={(e) => setNewClass({ ...newClass, class_name: e.target.value })}
                     placeholder="e.g., Computer Science 101"
                   />
+                  <p className="text-xs text-muted-foreground">Letters only</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="course_subject">Course/Subject *</Label>
@@ -825,6 +932,7 @@ export default function StudentClasses() {
                     onChange={(e) => setNewClass({ ...newClass, course_subject: e.target.value })}
                     placeholder="e.g., Introduction to Programming"
                   />
+                  <p className="text-xs text-muted-foreground">Required</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="section_block">Section/Block *</Label>
@@ -834,16 +942,18 @@ export default function StudentClasses() {
                     onChange={(e) => setNewClass({ ...newClass, section_block: e.target.value })}
                     placeholder="e.g., A"
                   />
+                  <p className="text-xs text-muted-foreground">Required field</p>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="room">Room</Label>
+                  <Label htmlFor="room">Room *</Label>
                   <Input
                     id="room"
                     value={newClass.room}
                     onChange={(e) => setNewClass({ ...newClass, room: e.target.value })}
-                    placeholder="e.g., Room 301"
+                    placeholder="e.g., 301"
                   />
+                  <p className="text-xs text-muted-foreground">Numbers only</p>
                 </div>
                 
               </div>
@@ -874,27 +984,41 @@ export default function StudentClasses() {
 
               <div className="border rounded-lg p-4 space-y-4">
                 <h4 className="font-medium">Add Student Manually</h4>
-                <div className="grid grid-cols-4 gap-3">
-                  <Input
-                    placeholder="Student ID (optional)"
-                    value={newStudent.student_id}
-                    onChange={(e) => setNewStudent({ ...newStudent, student_id: e.target.value })}
-                  />
-                  <Input
-                    placeholder="First Name"
-                    value={newStudent.first_name}
-                    onChange={(e) => setNewStudent({ ...newStudent, first_name: e.target.value })}
-                  />
-                  <Input
-                    placeholder="Last Name"
-                    value={newStudent.last_name}
-                    onChange={(e) => setNewStudent({ ...newStudent, last_name: e.target.value })}
-                  />
-                  <Input
-                    placeholder="Email (optional)"
-                    value={newStudent.email}
-                    onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
-                  />
+                <div className="space-y-3">
+                  <div className="grid grid-cols-4 gap-3">
+                    <div>
+                      <Input
+                        placeholder="Student ID (optional)"
+                        value={newStudent.student_id}
+                        onChange={(e) => setNewStudent({ ...newStudent, student_id: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">9 digits, start with 20</p>
+                    </div>
+                    <div>
+                      <Input
+                        placeholder="First Name *"
+                        value={newStudent.first_name}
+                        onChange={(e) => setNewStudent({ ...newStudent, first_name: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Letters, 4+ chars</p>
+                    </div>
+                    <div>
+                      <Input
+                        placeholder="Last Name *"
+                        value={newStudent.last_name}
+                        onChange={(e) => setNewStudent({ ...newStudent, last_name: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Letters, 4+ chars</p>
+                    </div>
+                    <div>
+                      <Input
+                        placeholder="Email (optional)"
+                        value={newStudent.email}
+                        onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">@gmail.com only</p>
+                    </div>
+                  </div>
                 </div>
                 <Button onClick={handleAddStudent} variant="outline" size="sm">
                   <Plus className="w-4 h-4 mr-2" />
@@ -1230,6 +1354,27 @@ export default function StudentClasses() {
             </div>
           )}
           <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => {
+                if (selectedClass) {
+                  // Load the selected class into edit mode
+                  setNewClass({
+                    class_name: selectedClass.class_name,
+                    course_subject: selectedClass.course_subject,
+                    section_block: selectedClass.section_block,
+                    room: selectedClass.room,
+                  });
+                  setStudents(selectedClass.students);
+                  setEditingClassId(selectedClass.id);
+                  setShowViewDialog(false);
+                  setShowAddDialog(true);
+                  setCurrentTab('basic');
+                }
+              }}
+            >
+              Edit Class
+            </Button>
             <Button onClick={() => setShowViewDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>

@@ -114,9 +114,12 @@ export default function Dashboard() {
             subject: data.subject || '',
             num_items: data.num_items || 0,
             created_at: data.created_at,
-            generated_sheets: data.generated_sheets || []
+            generated_sheets: data.generated_sheets || [],
+            isArchived: data.isArchived || false
           } as Exam;
         })
+        // Filter out archived exams (client-side to avoid needing composite index)
+        .filter((exam: any) => !exam.isArchived)
         // Sort by created_at descending (newest first) and limit to 5
         .sort((a, b) => {
           const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -136,25 +139,9 @@ export default function Dashboard() {
           return sum;
         }, 0);
         
-        // OPTIMIZATION 3: Get student count from a separate lightweight query with timeout
-        let totalStudents = 0;
-        try {
-          const studentsRef = collection(db, 'students');
-          const studentsQuery = query(
-            studentsRef,
-            where('created_by', '==', user.id)
-          );
-          const studentsSnapshot = await Promise.race([
-            getDocs(studentsQuery),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Students query timeout')), 3000);
-            })
-          ]) as any;
-          totalStudents = studentsSnapshot.size;
-        } catch (error) {
-          console.log('Students collection query failed:', error);
-          totalStudents = 0; // Fallback to 0
-        }
+        // OPTIMIZATION 3: Student count - set to 0 for now to avoid timeout
+        // Note: Students are managed per class, not globally
+        const totalStudents = 0;
         
         console.log('Dashboard data fetched successfully:', {
           totalExams,
