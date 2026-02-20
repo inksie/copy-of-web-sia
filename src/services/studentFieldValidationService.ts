@@ -355,7 +355,8 @@ export class StudentFieldValidationService {
       const { OfficialRecordService } = await import('./officialRecordService');
       const result = await OfficialRecordService.markMultipleAsOfficial(
         studentIds,
-        validatedBy
+        validatedBy,
+        adminEmail
       );
 
       // Log the bulk official marking
