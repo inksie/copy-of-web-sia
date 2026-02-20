@@ -22,6 +22,7 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
+    // Only redirect if signup was successful (not just if user exists)
     if (user && success) {
       const timer = setTimeout(() => {
         router.push('/dashboard');
@@ -34,12 +35,14 @@ export function SignUpForm({ onToggleMode }: SignUpFormProps) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(false); // Reset success state
 
     const { error } = await signUp(email, password, fullName);
     
     if (error) {
       setError(error.message);
       setLoading(false);
+      setSuccess(false); // Ensure success is false on error
     } else {
       setSuccess(true);
       setLoading(false);

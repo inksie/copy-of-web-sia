@@ -201,7 +201,18 @@ export default function Dashboard() {
         return;
       }
 
-      const newExam = await createExam(formData, user.id);
+      console.log('🔍 User object:', user);
+      console.log('🔍 User.instructorId:', user?.instructorId);
+      
+      if (!user?.instructorId) {
+        toast.error('⚠️ Instructor ID not found. Please log out and log back in, or contact support.');
+        return;
+      }
+
+      // Pass instructorId when creating exam
+      console.log('📝 Creating exam with instructorId:', user.instructorId);
+      const newExam = await createExam(formData, user.id, user.instructorId);
+      console.log('✅ Exam saved:', newExam);
 
       // OPTIMIZATION 4: Update stats without refetching
       setStats(prev => {

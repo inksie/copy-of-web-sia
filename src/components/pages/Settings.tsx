@@ -1,9 +1,12 @@
 'use client';
 
 import { Card } from '@/components/ui/card';
-import { Settings as SettingsIcon, Bell, Lock, Database } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, Lock, Database, User } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Settings() {
+  const { user } = useAuth();
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -11,6 +14,49 @@ export default function Settings() {
         <h1 className="text-3xl font-bold text-foreground">Settings</h1>
         <p className="text-muted-foreground mt-1">Configure system preferences and account settings.</p>
       </div>
+
+      {/* Account Information */}
+      <Card className="p-6 border">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center">
+            <User className="w-5 h-5 text-purple-600" />
+          </div>
+          <h2 className="text-xl font-bold text-foreground">Account Information</h2>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">Instructor ID</label>
+            <div className="w-full px-4 py-2 border rounded-md bg-muted/30 font-mono text-sm">
+              {user?.instructorId || 'Loading...'}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Your unique instructor identifier used throughout the system
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">Full Name</label>
+            <div className="w-full px-4 py-2 border rounded-md bg-muted/30">
+              {user?.displayName || 'N/A'}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">Email Address</label>
+            <div className="w-full px-4 py-2 border rounded-md bg-muted/30">
+              {user?.email || 'N/A'}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">Account Created</label>
+            <div className="w-full px-4 py-2 border rounded-md bg-muted/30">
+              {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* General Settings */}
       <Card className="p-6 border">

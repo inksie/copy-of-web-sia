@@ -159,7 +159,18 @@ export default function NewExam() {
         className: formData.className,
       };
 
-      const newExam = await createExam(examData, user.id);
+      console.log('📝 Creating exam from NewExam page');
+      console.log('  - User:', user);
+      console.log('  - InstructorId:', user.instructorId);
+      
+      if (!user.instructorId) {
+        toast.error('⚠️ Instructor ID not found. Please log out and log back in.');
+        setLoading(false);
+        return;
+      }
+
+      const newExam = await createExam(examData, user.id, user.instructorId);
+      console.log('✅ Exam created:', newExam);
 
       toast.success("Exam created successfully");
       router.push(`/exams/${newExam.id}`);

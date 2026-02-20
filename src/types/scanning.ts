@@ -13,6 +13,7 @@ export interface AnswerKey {
   answers: AnswerChoice[];
   questionSettings?: QuestionAnswer[];
   createdBy: string;
+  instructorId?: string; // Instructor ID for the answer key creator
   createdAt: string;
   updatedAt: string;
   locked?: boolean;

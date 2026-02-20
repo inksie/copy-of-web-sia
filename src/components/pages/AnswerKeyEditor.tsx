@@ -3,7 +3,16 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
-import { ArrowLeft, Save, Check, Lock, Upload, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ArrowLeft, Save, Check, Lock, Upload, Download, FileDown } from 'lucide-react';
 import { AnswerKeyService } from '@/services/answerKeyService';
 import { AnswerChoice } from '@/types/scanning';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -27,6 +36,9 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
   const [error, setError] = useState<string | null>(null);
   const [answerKeyId, setAnswerKeyId] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorModalTitle, setErrorModalTitle] = useState('Error');
+  const [errorModalMessage, setErrorModalMessage] = useState('');
 
   // Load exam and answer key on mount
   useEffect(() => {
@@ -50,6 +62,12 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const showErrorDialog = (title: string, message: string) => {
+    setErrorModalTitle(title);
+    setErrorModalMessage(message);
+    setShowErrorModal(true);
   };
 
   const loadAnswerKey = async () => {
@@ -132,11 +150,27 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
         return answer ? answer.toUpperCase() as AnswerChoice : 'A';
       });
 
+      console.log('🔑 Saving answer key...');
+      console.log('  - User:', user);
+      console.log('  - InstructorId:', user?.instructorId);
+      
+      if (!user?.instructorId) {
+        toast.error('⚠️ Instructor ID not found. Please log out and log back in.');
+        setSaving(false);
+        return;
+      }
+
       let result;
       if (answerKeyId) {
         result = await AnswerKeyService.updateAnswerKey(answerKeyId, answerArray, user.id);
       } else {
-        const createResult = await AnswerKeyService.createAnswerKey(params.id, answerArray, user.id);
+        const createResult = await AnswerKeyService.createAnswerKey(
+          params.id, 
+          answerArray, 
+          user.id, 
+          undefined, // questionSettings
+          user.instructorId // Pass instructorId
+        );
         if (createResult.success && createResult.data) {
           setAnswerKeyId(createResult.data.id);
         }
@@ -149,12 +183,24 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
         setTimeout(() => setSaved(false), 2000);
       } else {
         setError(result.error || 'Failed to save answer key');
+        showErrorDialog('Save Failed', result.error || 'Failed to save answer key. Please try again.');
         toast.error(result.error || 'Failed to save answer key');
       }
     } catch (err) {
       const errorMessage = (err as Error).message;
       setError(errorMessage);
-      toast.error(errorMessage);
+      
+      // Check if it's a network error
+      if (errorMessage.includes('network') || errorMessage.includes('offline') || errorMessage.includes('fetch')) {
+        showErrorDialog(
+          'Network Error',
+          'Unable to save answer key. Please check your internet connection and try again.'
+        );
+        toast.error('Network error - Please check your connection');
+      } else {
+        showErrorDialog('Error', errorMessage);
+        toast.error(errorMessage);
+      }
       console.error('Error saving answer key:', err);
     } finally {
       setSaving(false);
@@ -177,6 +223,24 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Answer Key');
     XLSX.writeFile(workbook, `${exam.title}_answer_key_template.xlsx`);
     toast.success('Template downloaded successfully');
+  };
+
+  // Download current answer key
+  const handleDownloadAnswerKey = () => {
+    if (!exam) return;
+    
+    const data = [];
+    data.push(['Question Number', 'Answer']);
+    
+    for (let i = 1; i <= exam.num_items; i++) {
+      data.push([i, answers[i] || '']);
+    }
+    
+    const worksheet = XLSX.utils.aoa_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Answer Key');
+    XLSX.writeFile(workbook, `${exam.title}_answer_key.xlsx`);
+    toast.success('Answer key downloaded successfully');
   };
 
   // Upload answer key from file
@@ -216,7 +280,12 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
         }
 
         if (errors.length > 0) {
-          setError(`File upload errors:\n${errors.join('\n')}`);
+          const errorList = errors.slice(0, 10).join('\n'); // Show first 10 errors
+          const moreErrors = errors.length > 10 ? `\n... and ${errors.length - 10} more errors` : '';
+          showErrorDialog(
+            'File Upload Errors',
+            `Found ${errors.length} error(s) in the uploaded file:\n\n${errorList}${moreErrors}\n\nPlease correct these errors and try again.`
+          );
           toast.error(`Found ${errors.length} error(s) in uploaded file`);
           return;
         }
@@ -226,9 +295,18 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
         setError(null);
       } catch (err) {
         console.error('Error parsing file:', err);
-        setError('Failed to parse file. Please ensure it matches the template format.');
-        toast.error('Failed to parse file');
+        const errorMsg = 'Failed to parse file. The file format is incorrect or contains invalid data. Please ensure:\n\n• The file is in Excel format (.xlsx or .xls)\n• It contains "Question Number" and "Answer" columns\n• Question numbers are sequential (1, 2, 3...)\n• Answers are valid choices (A, B, C, D, or E)';
+        showErrorDialog('Invalid File Format', errorMsg);
+        toast.error('Failed to parse file - Invalid format');
       }
+    };
+
+    reader.onerror = () => {
+      showErrorDialog(
+        'File Read Error',
+        'Unable to read the file. Please ensure the file is not corrupted and try again.'
+      );
+      toast.error('Failed to read file');
     };
 
     reader.readAsArrayBuffer(file);
@@ -281,6 +359,17 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Download Answer Key Button */}
+          <button
+            onClick={handleDownloadAnswerKey}
+            className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-md font-semibold hover:bg-green-700 transition-colors text-sm"
+            title="Download current answer key"
+            disabled={answersEntered === 0}
+          >
+            <FileDown className="w-4 h-4" />
+            <span className="hidden sm:inline">Download Key</span>
+          </button>
+
           {/* Download Template Button */}
           <button
             onClick={handleDownloadTemplate}
@@ -412,6 +501,26 @@ export default function AnswerKeyEditor({ params }: AnswerKeyEditorProps) {
           {saving ? 'Saving...' : 'Save Answer Key'}
         </button>
       </div>
+
+      {/* Error Modal */}
+      <Dialog open={showErrorModal} onOpenChange={setShowErrorModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <span className="text-2xl">⚠️</span>
+              {errorModalTitle}
+            </DialogTitle>
+            <DialogDescription className="text-base whitespace-pre-wrap pt-4">
+              {errorModalMessage}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setShowErrorModal(false)} className="w-full sm:w-auto">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

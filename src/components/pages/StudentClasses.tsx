@@ -85,6 +85,13 @@ export default function StudentClasses() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   
+  // Debug: Log user changes
+  useEffect(() => {
+    console.log('👤 User state changed in StudentClasses:');
+    console.log('  - User:', user);
+    console.log('  - InstructorId:', user?.instructorId);
+  }, [user]);
+  
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -241,14 +248,24 @@ export default function StudentClasses() {
         toast.success('Class updated successfully');
       } else {
         // CREATE new class
+        console.log('🔍 User object:', user);
+        console.log('🔍 User.instructorId:', user?.instructorId);
+        
+        if (!user?.instructorId) {
+          toast.error('⚠️ Instructor ID not found. Please log out and log back in, or contact support.');
+          return;
+        }
+        
         const classToAdd: Omit<Class, 'id'> = {
           ...newClass,
           students: students,
           created_at: new Date().toISOString(),
         };
 
-        // Save to Firestore
-        const savedClass = await createClass(classToAdd, user.id);
+        // Save to Firestore with instructorId
+        console.log('📚 Creating class with instructorId:', user.instructorId);
+        const savedClass = await createClass(classToAdd, user.id, user.instructorId);
+        console.log('✅ Class saved:', savedClass);
         
         // CRITICAL: Also save individual student records to the students collection
         if (students.length > 0) {

@@ -75,7 +75,8 @@ export function AddNewClassModal({ isOpen, onClose, onClassCreated }: AddNewClas
           students: [],
           created_at: new Date().toISOString(),
         },
-        user?.id || ''
+        user?.id || '',
+        user?.instructorId // Pass instructorId
       );
 
       toast({

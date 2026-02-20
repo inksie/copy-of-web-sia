@@ -174,7 +174,7 @@ export default function ClassManagement() {
 
     // Save to Firebase in background (don't wait for it)
     try {
-      const newClassDoc = await createClass(classToAdd, user.id);
+      const newClassDoc = await createClass(classToAdd, user.id, user.instructorId);
       // Replace temp class with real one
       setClasses((prevClasses) =>
         prevClasses.map((c) => (c.id === tempId ? newClassDoc : c))

@@ -181,7 +181,19 @@ export default function Exams() {
 
       // Save to Firebase in background (don't wait for it)
       try {
-        const newExam = await createExam(formData, user.id);
+        console.log('📝 Creating exam from Exams page');
+        console.log('  - User:', user);
+        console.log('  - InstructorId:', user.instructorId);
+        
+        if (!user.instructorId) {
+          toast.error('⚠️ Instructor ID not found. Please log out and log back in.');
+          setExams((prevExams) => prevExams.filter((e) => e.id !== tempId));
+          return;
+        }
+        
+        const newExam = await createExam(formData, user.id, user.instructorId);
+        console.log('✅ Exam created:', newExam);
+        
         // Replace temp exam with real one
         setExams((prevExams) =>
           prevExams.map((e) => (e.id === tempId ? newExam : e))

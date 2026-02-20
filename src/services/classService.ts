@@ -29,6 +29,7 @@ export interface Class {
   students: Student[];
   created_at: string;
   createdBy?: string;
+  instructorId?: string; // Instructor ID for the class creator
   updatedAt?: string;
 }
 
@@ -37,26 +38,39 @@ const CLASSES_COLLECTION = 'classes';
 /**
  * Create a new class in Firestore
  */
-export async function createClass(classData: Omit<Class, 'id'>, userId: string): Promise<Class> {
+export async function createClass(
+  classData: Omit<Class, 'id'>, 
+  userId: string, 
+  instructorId?: string // Add instructorId parameter
+): Promise<Class> {
   try {
-    console.log('Creating class with data:', classData, 'for user:', userId);
+    console.log('📚 Creating class...');
+    console.log('  - Class data:', classData);
+    console.log('  - User ID:', userId);
+    console.log('  - Instructor ID:', instructorId);
+    
+    if (!instructorId) {
+      console.warn('⚠️ WARNING: instructorId is undefined or null!');
+    }
     
     const newClassData = {
       ...classData,
-      createdBy: userId,
+      createdBy: userId, // Keep userId for backward compatibility
+      ...(instructorId && { instructorId: instructorId }), // Only include if not undefined
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
 
-    console.log('Sending to Firestore:', newClassData);
+    console.log('📤 Sending to Firestore:', newClassData);
     const docRef = await addDoc(collection(db, CLASSES_COLLECTION), newClassData);
-    console.log('Class created successfully with ID:', docRef.id);
+    console.log('✅ Class created successfully with ID:', docRef.id);
     
-    // Return the class with the generated ID
+    // Return the class with the generated ID (include instructorId)
     const newClass: Class = {
       id: docRef.id,
       ...classData,
       createdBy: userId,
+      ...(instructorId && { instructorId: instructorId }), // Include instructorId in return value
       updatedAt: new Date().toISOString(),
     };
 

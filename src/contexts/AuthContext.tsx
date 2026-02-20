@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
+import { createInstructorProfile } from '@/services/instructorService';
 
 type AppRole = 'instructor';
 
@@ -22,6 +23,7 @@ interface AppUser {
   user_metadata?: Record<string, unknown>;
   displayName?: string;
   role: AppRole;
+  instructorId?: string; // New field for instructor ID
 }
 
 interface AppSession {
@@ -96,9 +98,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // OPTIMIZATION 4: Check cache first
           const cachedUser = userCache.get(firebaseUser.uid);
           
-          if (cachedUser) {
-            // Use cached user data
-            console.log('Using cached user data');
+          if (cachedUser && cachedUser.instructorId) {
+            // Use cached user data ONLY if it has instructorId
+            console.log('✅ Using cached user data with instructorId:', cachedUser.instructorId);
             setUser(cachedUser);
             setUserRole(cachedUser.role);
             
@@ -162,27 +164,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
 
           // OPTIMIZATION 6: Lazy load Firestore user data with timeout
-          if (!cachedUser) {
+          // ALWAYS fetch from Firestore if cache doesn't have instructorId
+          if (!cachedUser || !cachedUser.instructorId) {
+            console.log('🔄 Fetching user data from Firestore (cache miss or no instructorId)');
             const loadUserData = async () => {
               try {
                 const userDocRef = doc(db, 'users', firebaseUser.uid);
                 
-                // Add timeout to prevent blocking on slow Firestore
+                // Increase timeout to 5 seconds for instructorId fetch
                 let userDoc;
                 try {
+                  console.log('⏳ Fetching from Firestore with 5s timeout...');
                   userDoc = await Promise.race([
                     getDoc(userDocRef),
                     new Promise((_, reject) => {
-                      setTimeout(() => reject(new Error('Firestore timeout')), 500);
+                      setTimeout(() => reject(new Error('Firestore timeout')), 5000);
                     })
                   ]) as any;
+                  console.log('✅ Firestore fetch successful');
                 } catch (timeoutError) {
-                  // Timeout or error - user is already logged in with basic data, skip Firestore fetch
-                  return;
+                  console.error('❌ Firestore fetch timed out or failed:', timeoutError);
+                  // If we need instructorId, don't skip - retry without timeout
+                  try {
+                    console.log('🔄 Retrying without timeout...');
+                    userDoc = await getDoc(userDocRef);
+                    console.log('✅ Retry successful');
+                  } catch (retryError) {
+                    console.error('❌ Retry failed:', retryError);
+                    return;
+                  }
                 }
                 
                 if (userDoc && userDoc.exists()) {
                   const userData = userDoc.data();
+                  
+                  console.log('📋 Loading user data from Firestore:', userData);
+                  console.log('🆔 InstructorId from Firestore:', userData.instructorId);
+                  
                   const fullUserData: AppUser = {
                     id: firebaseUser.uid,
                     email: userData.email || firebaseUser.email || '',
@@ -193,7 +211,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     },
                     displayName: userData.fullName || firebaseUser.displayName || '',
                     role: userData.role || 'instructor',
+                    instructorId: userData.instructorId, // Read directly from users collection
                   };
+                  
+                  console.log('✅ Full user data constructed:', fullUserData);
+                  console.log('🎯 InstructorId in fullUserData:', fullUserData.instructorId);
                   
                   setUser(fullUserData);
                   setUserRole(userData.role || 'instructor');
@@ -264,28 +286,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // Run these in parallel
-      await Promise.allSettled([
-        // Update display name
-        updateProfile(firebaseUser, {
-          displayName: fullName,
-        }).catch(error => {
-          console.warn('Could not update display name:', error?.message);
-        }),
+      try {
+        // STEP 1: Create instructor profile with auto-generated instructor ID (MUST complete first)
+        let instructorId: string | undefined;
+        
+        console.log('🔵 Starting instructor profile creation...');
+        const instructorProfile = await createInstructorProfile(
+          firebaseUser.uid,
+          email,
+          fullName
+        );
+        instructorId = instructorProfile.instructorId;
+        console.log('✅ Instructor profile created with ID:', instructorId);
 
-        // Create user document in Firestore
-        setDoc(doc(db, 'users', firebaseUser.uid), {
+        // STEP 2: Update display name (parallel with user doc creation)
+        const updateDisplayNamePromise = updateProfile(firebaseUser, {
+          displayName: fullName,
+        }).then(() => {
+          console.log('✅ Display name updated');
+        }).catch(error => {
+          console.warn('⚠️ Could not update display name:', error?.message);
+          // Non-critical error, don't fail signup
+        });
+
+        // STEP 3: Create user document in Firestore with instructorId (CRITICAL)
+        console.log('🔵 Creating user document with instructorId:', instructorId);
+        const createUserDocPromise = setDoc(doc(db, 'users', firebaseUser.uid), {
           email: email,
           fullName: fullName,
           role: 'instructor',
+          ...(instructorId && { instructorId: instructorId }), // Only include if not undefined
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        }).catch(error => {
-          console.warn('Could not save user to Firestore:', error?.message);
-        })
-      ]);
+        }).then(() => {
+          console.log('✅ User document created in Firestore with instructorId:', instructorId);
+        });
 
-      return { error: null };
+        // Wait for both to complete - if user doc creation fails, this will throw
+        await Promise.all([updateDisplayNamePromise, createUserDocPromise]);
+
+        return { error: null };
+        
+      } catch (setupError: any) {
+        // If user document creation fails, delete the Firebase Auth user
+        console.error('✗ Failed to complete user setup, deleting auth user:', setupError);
+        
+        try {
+          await firebaseUser.delete();
+          console.log('✓ Auth user deleted successfully');
+        } catch (deleteError) {
+          console.error('✗ Could not delete auth user:', deleteError);
+        }
+        
+        // Return error message about permissions
+        if (setupError.code === 'permission-denied' || setupError.message?.includes('permission')) {
+          return { 
+            error: new Error('Database permission denied. Please contact the administrator to set up Firestore security rules.') 
+          };
+        }
+        
+        return { 
+          error: new Error(setupError.message || 'Failed to complete account setup. Please try again.') 
+        };
+      }
+      
     } catch (error: any) {
       console.error('Sign up error:', error);
 

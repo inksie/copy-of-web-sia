@@ -21,8 +21,18 @@ export class AnswerKeyService {
     answers: AnswerChoice[],
     userId: string,
     questionSettings?: any[],
+    instructorId?: string, // Add instructorId parameter
   ): Promise<{ success: boolean; data?: AnswerKey; error?: string }> {
     try {
+      console.log('🔑 Creating answer key...');
+      console.log('  - Exam ID:', examId);
+      console.log('  - User ID:', userId);
+      console.log('  - Instructor ID:', instructorId);
+      
+      if (!instructorId) {
+        console.warn('⚠️ WARNING: instructorId is undefined or null!');
+      }
+      
       const answerKeyId = `ak_${examId}_${Date.now()}`;
       const now = new Date().toISOString();
 
@@ -32,6 +42,7 @@ export class AnswerKeyService {
         answers,
         questionSettings,
         createdBy: userId,
+        ...(instructorId && { instructorId: instructorId }), // Only include if not undefined
         createdAt: now,
         updatedAt: now,
         locked: false,
@@ -47,11 +58,13 @@ export class AnswerKeyService {
         }).filter(([, v]) => v !== undefined && v !== null)
       );
 
+      console.log('📤 Sending answer key to Firestore:', cleanedData);
       await setDoc(doc(db, ANSWER_KEYS_COLLECTION, answerKeyId), cleanedData);
+      console.log('✅ Answer key created successfully');
 
       return { success: true, data: answerKeyData };
     } catch (error) {
-      console.error("Error creating answer key:", error);
+      console.error('❌ Error creating answer key:', error);
       return { success: false, error: (error as Error).message };
     }
   }

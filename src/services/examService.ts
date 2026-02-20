@@ -22,6 +22,7 @@ export interface Exam {
   answer_keys: string[];
   generated_sheets: GeneratedSheet[];
   createdBy?: string;
+  instructorId?: string; // Instructor ID for the exam creator
   updatedAt?: string;
   className?: string;
   examType?: 'board' | 'diagnostic';
@@ -54,8 +55,18 @@ export interface ExamFormData {
 export async function createExam(
   formData: ExamFormData,
   userId: string,
+  instructorId?: string, // Add instructorId parameter
 ): Promise<Exam> {
   try {
+    console.log('📝 Creating exam...');
+    console.log('  - Exam data:', formData);
+    console.log('  - User ID:', userId);
+    console.log('  - Instructor ID:', instructorId);
+    
+    if (!instructorId) {
+      console.warn('⚠️ WARNING: instructorId is undefined or null!');
+    }
+    
     const examData = {
       title: formData.name,
       subject: formData.folder,
@@ -64,7 +75,8 @@ export async function createExam(
       created_at: formData.date,
       answer_keys: [],
       generated_sheets: [],
-      createdBy: userId,
+      createdBy: userId, // Keep userId for backward compatibility
+      ...(instructorId && { instructorId: instructorId }), // Only include if not undefined
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       className: formData.className || null,
@@ -74,7 +86,7 @@ export async function createExam(
     };
     const docRef = await addDoc(collection(db, "exams"), examData);
 
-    // Return the exam with the generated ID
+    // Return the exam with the generated ID (include instructorId)
     const newExam: Exam = {
       id: docRef.id,
       title: examData.title,
@@ -85,6 +97,7 @@ export async function createExam(
       answer_keys: examData.answer_keys,
       generated_sheets: examData.generated_sheets,
       createdBy: userId,
+      ...(instructorId && { instructorId: instructorId }), // Include instructorId in return value
       updatedAt: new Date().toISOString(),
       className: examData.className || undefined,
       examType: examData.examType || 'board',
