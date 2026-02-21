@@ -31,7 +31,7 @@ import {
 import { getExamById, Exam } from "@/services/examService";
 import { AnswerKeyService } from "@/services/answerKeyService";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { toast } from "sonner";
 import { generateTemplatePDF } from "@/lib/templatePdfGenerator";
@@ -153,6 +153,14 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
     }
 
     try {
+      // Check Firebase auth state
+      const currentUser = auth.currentUser;
+      console.log('🔍 Firebase Auth State:', {
+        isAuthenticated: !!currentUser,
+        uid: currentUser?.uid,
+        email: currentUser?.email,
+      });
+
       console.log('🔍 Creating template with user:', {
         userId: user.id,
         instructorId: user.instructorId,
@@ -176,13 +184,16 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
 
       console.log('📄 Template data:', templateData);
 
+      // Verify Firebase is initialized
+      console.log('🔥 Firebase DB:', db.app.name);
+
       await addDoc(collection(db, 'templates'), templateData);
       
       toast.success('✅ Template created successfully!');
       
       // Generate and download PDF
       toast.info('📄 Generating PDF...');
-      generateTemplatePDF({
+      await generateTemplatePDF({
         name: exam.title,
         description: exam.subject || 'Answer Sheet Template',
         numQuestions: newTemplate.numQuestions,
@@ -197,9 +208,17 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
         numQuestions: 20,
         choicesPerQuestion: 4,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error creating template:', error);
-      toast.error('Failed to create template. Please check permissions.');
+      console.error('❌ Error code:', error?.code);
+      console.error('❌ Error message:', error?.message);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
+      
+      if (error?.code === 'permission-denied') {
+        toast.error('Permission denied. Please check if you are logged in and try again.');
+      } else {
+        toast.error(`Failed to create template: ${error?.message || 'Unknown error'}`);
+      }
     }
   };
 

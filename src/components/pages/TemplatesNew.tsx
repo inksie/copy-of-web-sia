@@ -197,10 +197,10 @@ export default function Templates() {
     setShowPreview(true);
   };
 
-  const handleDownload = (template: Template) => {
+  const handleDownload = async (template: Template) => {
     try {
       toast.info('📄 Generating PDF...');
-      generateTemplatePDF({
+      await generateTemplatePDF({
         name: template.name,
         description: template.description,
         numQuestions: template.numQuestions,
