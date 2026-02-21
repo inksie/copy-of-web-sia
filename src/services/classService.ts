@@ -31,6 +31,7 @@ export interface Class {
   createdBy?: string;
   instructorId?: string; // Instructor ID for the class creator
   updatedAt?: string;
+  isArchived?: boolean;
 }
 
 const CLASSES_COLLECTION = 'classes';
