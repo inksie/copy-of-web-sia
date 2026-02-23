@@ -46,6 +46,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingCanvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const detectionLoopRef = useRef<number | null>(null);
   
   // State
   const [exam, setExam] = useState<Exam | null>(null);
@@ -66,6 +68,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
   const [imageSource, setImageSource] = useState<'camera' | 'upload' | null>(null);
+  const [markersDetected, setMarkersDetected] = useState(false);
   // Load exam data
   useEffect(() => {
     async function loadExamData() {
@@ -136,6 +139,151 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       };
     }
   }, [stream]);
+
+  // Real-time marker detection loop for camera mode
+  useEffect(() => {
+    if (mode !== 'camera' || !stream) {
+      // Stop detection loop when not in camera mode
+      if (detectionLoopRef.current) {
+        cancelAnimationFrame(detectionLoopRef.current);
+        detectionLoopRef.current = null;
+      }
+      return;
+    }
+
+    const detectCanvas = document.createElement('canvas');
+    const detectCtx = detectCanvas.getContext('2d', { willReadFrequently: true });
+    if (!detectCtx) return;
+
+    let lastDetectTime = 0;
+    const DETECT_INTERVAL = 500; // Run detection every 500ms to save CPU
+
+    const runDetection = (timestamp: number) => {
+      if (mode !== 'camera' || !videoRef.current || videoRef.current.readyState < 2) {
+        detectionLoopRef.current = requestAnimationFrame(runDetection);
+        return;
+      }
+
+      if (timestamp - lastDetectTime < DETECT_INTERVAL) {
+        detectionLoopRef.current = requestAnimationFrame(runDetection);
+        return;
+      }
+      lastDetectTime = timestamp;
+
+      const video = videoRef.current;
+      // Use lower resolution for fast detection (320px wide)
+      const scale = 320 / video.videoWidth;
+      const w = Math.floor(video.videoWidth * scale);
+      const h = Math.floor(video.videoHeight * scale);
+      
+      detectCanvas.width = w;
+      detectCanvas.height = h;
+      detectCtx.drawImage(video, 0, 0, w, h);
+
+      try {
+        const imgData = detectCtx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+
+        // Fast grayscale + threshold
+        const grayscale = new Uint8Array(w * h);
+        for (let i = 0; i < data.length; i += 4) {
+          grayscale[i / 4] = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        }
+
+        const otsu = calculateOtsuThreshold(grayscale);
+        const binary = new Uint8Array(w * h);
+        for (let i = 0; i < grayscale.length; i++) {
+          binary[i] = grayscale[i] < otsu ? 1 : 0;
+        }
+
+        // Detect markers
+        const markers = findCornerMarkers(binary, w, h, true);
+        
+        const tlOk = markers.topLeft && markers.found;
+        const trOk = markers.topRight && markers.found;
+        const blOk = markers.bottomLeft && markers.found;
+        const brOk = markers.bottomRight && markers.found;
+
+        setMarkersDetected(markers.found);
+
+        // Draw overlay on the overlay canvas
+        const overlay = overlayCanvasRef.current;
+        if (overlay) {
+          const oCtx = overlay.getContext('2d');
+          if (oCtx) {
+            overlay.width = overlay.offsetWidth * (window.devicePixelRatio || 1);
+            overlay.height = overlay.offsetHeight * (window.devicePixelRatio || 1);
+            oCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+            oCtx.clearRect(0, 0, overlay.offsetWidth, overlay.offsetHeight);
+
+            const displayW = overlay.offsetWidth;
+            const displayH = overlay.offsetHeight;
+            // Scale from detection coords to display coords
+            const scaleX = displayW / w;
+            const scaleY = displayH / h;
+
+            const drawCorner = (cx: number, cy: number, found: boolean) => {
+              const dx = cx * scaleX;
+              const dy = cy * scaleY;
+              const size = 16;
+              
+              oCtx.strokeStyle = found ? '#22c55e' : '#ef4444';
+              oCtx.lineWidth = 3;
+              oCtx.fillStyle = found ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.2)';
+              
+              // Draw a circle at the marker position
+              oCtx.beginPath();
+              oCtx.arc(dx, dy, size, 0, Math.PI * 2);
+              oCtx.fill();
+              oCtx.stroke();
+
+              // Draw crosshair
+              oCtx.beginPath();
+              oCtx.moveTo(dx - size * 0.6, dy);
+              oCtx.lineTo(dx + size * 0.6, dy);
+              oCtx.moveTo(dx, dy - size * 0.6);
+              oCtx.lineTo(dx, dy + size * 0.6);
+              oCtx.stroke();
+            };
+
+            drawCorner(markers.topLeft.x, markers.topLeft.y, !!tlOk);
+            drawCorner(markers.topRight.x, markers.topRight.y, !!trOk);
+            drawCorner(markers.bottomLeft.x, markers.bottomLeft.y, !!blOk);
+            drawCorner(markers.bottomRight.x, markers.bottomRight.y, !!brOk);
+
+            // Draw connecting lines between markers if all found
+            if (markers.found) {
+              oCtx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
+              oCtx.lineWidth = 2;
+              oCtx.setLineDash([6, 4]);
+              oCtx.beginPath();
+              oCtx.moveTo(markers.topLeft.x * scaleX, markers.topLeft.y * scaleY);
+              oCtx.lineTo(markers.topRight.x * scaleX, markers.topRight.y * scaleY);
+              oCtx.lineTo(markers.bottomRight.x * scaleX, markers.bottomRight.y * scaleY);
+              oCtx.lineTo(markers.bottomLeft.x * scaleX, markers.bottomLeft.y * scaleY);
+              oCtx.closePath();
+              oCtx.stroke();
+              oCtx.setLineDash([]);
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore detection errors in live preview
+      }
+
+      detectionLoopRef.current = requestAnimationFrame(runDetection);
+    };
+
+    detectionLoopRef.current = requestAnimationFrame(runDetection);
+
+    return () => {
+      if (detectionLoopRef.current) {
+        cancelAnimationFrame(detectionLoopRef.current);
+        detectionLoopRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, stream]);
 
   // Start camera
   const startCamera = async () => {
@@ -1350,24 +1498,29 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               muted
               className="w-full h-full object-cover"
             />
-            {/* Camera overlay guide — portrait paper outline */}
-            <div className="absolute inset-0 pointer-events-none">
-              {/* Semi-transparent overlay outside the guide area */}
-              <div className="absolute inset-0 bg-black/30" />
-              {/* Clear center area matching paper aspect ratio */}
-              <div className="absolute inset-[6%] bg-transparent" style={{ 
-                boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)',
-                border: '2px solid rgba(255,255,255,0.7)',
-                borderRadius: '4px'
-              }}>
-                {/* Corner markers */}
-                <div className="absolute top-1 left-1 w-6 h-6 border-t-3 border-l-3 border-white" />
-                <div className="absolute top-1 right-1 w-6 h-6 border-t-3 border-r-3 border-white" />
-                <div className="absolute bottom-1 left-1 w-6 h-6 border-b-3 border-l-3 border-white" />
-                <div className="absolute bottom-1 right-1 w-6 h-6 border-b-3 border-r-3 border-white" />
+            {/* Real-time marker detection overlay */}
+            <canvas
+              ref={overlayCanvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{ zIndex: 10 }}
+            />
+            {/* Status indicator */}
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none" style={{ zIndex: 20 }}>
+              <div className={`px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-2 transition-all duration-300 ${
+                markersDetected 
+                  ? 'bg-green-600/90 text-white' 
+                  : 'bg-red-600/80 text-white'
+              }`}>
+                <div className={`w-2.5 h-2.5 rounded-full ${markersDetected ? 'bg-green-300 animate-pulse' : 'bg-red-300'}`} />
+                {markersDetected ? 'Ready to capture' : 'Align sheet — find all 4 corners'}
               </div>
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-white text-xs bg-black/60 px-3 py-1.5 rounded-full text-center max-w-[80%]">
-                Fill the frame with the answer sheet. Keep it flat and well-lit.
+            </div>
+            {/* Bottom instruction */}
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none" style={{ zIndex: 20 }}>
+              <div className="text-white text-xs bg-black/60 px-3 py-1.5 rounded-full text-center max-w-[85%]">
+                {markersDetected 
+                  ? '✓ All corners detected — tap Capture now'
+                  : 'Align the 4 black squares within view. Keep flat & well-lit.'}
               </div>
             </div>
           </div>
@@ -1376,9 +1529,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               <X className="w-4 h-4 mr-2" />
               Cancel
             </Button>
-            <Button onClick={capturePhoto} className="bg-[#1a472a] hover:bg-[#2d6b47]">
+            <Button 
+              onClick={capturePhoto} 
+              disabled={!markersDetected}
+              className={`${markersDetected 
+                ? 'bg-[#1a472a] hover:bg-[#2d6b47]' 
+                : 'bg-gray-400 cursor-not-allowed'}`}
+            >
               <Camera className="w-4 h-4 mr-2" />
-              Capture
+              {markersDetected ? 'Capture' : 'Aligning...'}
             </Button>
           </div>
         </Card>
