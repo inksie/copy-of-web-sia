@@ -65,7 +65,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [studentIdError, setStudentIdError] = useState<string | null>(null);
   const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
-
+  const [imageSource, setImageSource] = useState<'camera' | 'upload' | null>(null);
   // Load exam data
   useEffect(() => {
     async function loadExamData() {
@@ -176,6 +176,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
     setMode('select');
     setCapturedImage(null);
+    setImageSource(null);
   };
 
   // Capture photo from camera
@@ -197,6 +198,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const preprocessed = preprocessCameraImage(canvas, ctx);
     
     setCapturedImage(preprocessed);
+    setImageSource('camera');
     setMode('review');
     
     // Stop camera after capture
@@ -306,6 +308,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     reader.onload = (e) => {
       const imageData = e.target?.result as string;
       setCapturedImage(imageData);
+      setImageSource('upload');
       setMode('review');
     };
     reader.readAsDataURL(file);
@@ -342,7 +345,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item, imageSource || 'upload');
       
       setDetectedStudentId(studentId);
       setDetectedAnswers(answers);
@@ -404,13 +407,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     } finally {
       setProcessing(false);
     }
-  }, [capturedImage, exam, answerKey, classData]);
+  }, [capturedImage, exam, answerKey, classData, imageSource]);
 
   // ─── CORNER MARKER DETECTION ───
   const findCornerMarkers = (
     binary: Uint8Array,
     width: number,
-    height: number
+    height: number,
+    isCamera: boolean = false
   ): {
     found: boolean;
     topLeft: { x: number; y: number };
@@ -419,10 +423,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     bottomRight: { x: number; y: number };
   } => {
     const minDim = Math.min(width, height);
-    // Try multiple marker sizes for robustness (camera images vary in resolution)
     const baseMarkerSize = Math.max(12, Math.floor(minDim * 0.04));
-    const markerSizes = [baseMarkerSize, Math.floor(baseMarkerSize * 0.7), Math.floor(baseMarkerSize * 1.4)];
-    const searchFraction = 0.35; // Search a larger area for camera images
+
+    // Camera: multi-scale search with wider area; Upload: original single-scale, tighter area
+    const markerSizes = isCamera
+      ? [baseMarkerSize, Math.floor(baseMarkerSize * 0.7), Math.floor(baseMarkerSize * 1.4)]
+      : [baseMarkerSize];
+    const searchFraction = isCamera ? 0.35 : 0.30;
+    const minDensityThreshold = isCamera ? 0.30 : 0.40;
 
     const findMarkerInRegion = (
       rx1: number, ry1: number, rx2: number, ry2: number
@@ -466,30 +474,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bl = findMarkerInRegion(0, height - cH, cW, height);
     const br = findMarkerInRegion(width - cW, height - cH, width, height);
 
-    // Lower threshold for camera images where markers may have glare/shadow
-    const minDensityThreshold = 0.30;
-    
-    // Validate marker geometry: markers should form a roughly rectangular shape
     const markersValid = tl.density > minDensityThreshold &&
       tr.density > minDensityThreshold &&
       bl.density > minDensityThreshold &&
       br.density > minDensityThreshold;
     
-    if (markersValid) {
-      // Additional geometry check: top edge should be roughly horizontal,
-      // left edge should be roughly vertical
-      const topAngle = Math.abs(Math.atan2(tr.y - tl.y, tr.x - tl.x));
-      const leftAngle = Math.abs(Math.atan2(bl.x - tl.x, bl.y - tl.y));
-      
-      // Allow up to ~15 degrees of rotation
-      const maxAngle = 0.26; // ~15 degrees in radians
-      if (topAngle > maxAngle || leftAngle > maxAngle) {
-        console.log(`[OMR] Markers found but geometry invalid: topAngle=${(topAngle * 180 / Math.PI).toFixed(1)}°, leftAngle=${(leftAngle * 180 / Math.PI).toFixed(1)}°`);
-        // Still use them since they may be the best we have, but log the warning
-      }
-    }
-    
-    console.log(`[OMR] Marker densities: TL=${tl.density.toFixed(2)}, TR=${tr.density.toFixed(2)}, BL=${bl.density.toFixed(2)}, BR=${br.density.toFixed(2)}`);
+    console.log(`[OMR] Marker detection (${isCamera ? 'camera' : 'upload'}): densities TL=${tl.density.toFixed(2)}, TR=${tr.density.toFixed(2)}, BL=${bl.density.toFixed(2)}, BR=${br.density.toFixed(2)}, threshold=${minDensityThreshold}, found=${markersValid}`);
     
     return {
       found: markersValid,
@@ -721,9 +711,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const detectBubbles = async (
     imageData: ImageData,
     numQuestions: number,
-    choicesPerQuestion: number
+    choicesPerQuestion: number,
+    source: 'camera' | 'upload'
   ): Promise<{ studentId: string; answers: string[]; multipleAnswers: number[]; idDoubleShades: number[] }> => {
     const { data, width, height } = imageData;
+    const isCamera = source === 'camera';
+
+    console.log(`[OMR] Detection mode: ${source.toUpperCase()}`);
 
     // 1. Convert to grayscale
     const grayscale = new Uint8Array(width * height);
@@ -743,46 +737,63 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 3. Adaptive threshold using integral image
-    // Use a larger block size and gentler offset for camera images
+    // 3. Adaptive threshold — different parameters for camera vs upload
     const globalThreshold = calculateOtsuThreshold(grayscale);
     const binary = new Uint8Array(width * height);
-    const halfBlock = Math.max(15, Math.floor(Math.min(width, height) / 20));
 
-    // Compute image-wide mean brightness to adapt the offset
-    const totalPixels = width * height;
-    let totalBrightness = 0;
-    for (let i = 0; i < totalPixels; i++) totalBrightness += grayscale[i];
-    const meanBrightness = totalBrightness / totalPixels;
-    
-    // For camera images (typically brighter due to paper + lighting), use a proportional offset
-    // instead of a fixed offset. This adapts to different lighting conditions.
-    const adaptiveOffset = Math.max(5, Math.floor(meanBrightness * 0.06));
-    
-    console.log(`[OMR] Image ${width}x${height}, meanBrightness=${meanBrightness.toFixed(1)}, otsu=${globalThreshold}, adaptiveOffset=${adaptiveOffset}, halfBlock=${halfBlock}`);
+    if (isCamera) {
+      // Camera: larger block, proportional offset for uneven lighting
+      const halfBlock = Math.max(15, Math.floor(Math.min(width, height) / 20));
+      const totalPixels = width * height;
+      let totalBrightness = 0;
+      for (let i = 0; i < totalPixels; i++) totalBrightness += grayscale[i];
+      const meanBrightness = totalBrightness / totalPixels;
+      const adaptiveOffset = Math.max(5, Math.floor(meanBrightness * 0.06));
+      
+      console.log(`[OMR] Camera: ${width}x${height}, mean=${meanBrightness.toFixed(1)}, otsu=${globalThreshold}, offset=${adaptiveOffset}, block=${halfBlock}`);
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const x1 = Math.max(0, x - halfBlock);
-        const y1 = Math.max(0, y - halfBlock);
-        const x2 = Math.min(width - 1, x + halfBlock);
-        const y2 = Math.min(height - 1, y + halfBlock);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const x1 = Math.max(0, x - halfBlock);
+          const y1 = Math.max(0, y - halfBlock);
+          const x2 = Math.min(width - 1, x + halfBlock);
+          const y2 = Math.min(height - 1, y + halfBlock);
+          let sum = integral[y2 * width + x2];
+          if (x1 > 0) sum -= integral[y2 * width + (x1 - 1)];
+          if (y1 > 0) sum -= integral[(y1 - 1) * width + x2];
+          if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * width + (x1 - 1)];
+          const area = (x2 - x1 + 1) * (y2 - y1 + 1);
+          const localMean = sum / area;
+          const threshold = localMean - adaptiveOffset;
+          binary[y * width + x] = grayscale[y * width + x] < threshold ? 1 : 0;
+        }
+      }
+    } else {
+      // Upload: original proven parameters — smaller block, fixed offset
+      const halfBlock = Math.max(8, Math.floor(Math.min(width, height) / 40));
+      
+      console.log(`[OMR] Upload: ${width}x${height}, otsu=${globalThreshold}, block=${halfBlock}`);
 
-        let sum = integral[y2 * width + x2];
-        if (x1 > 0) sum -= integral[y2 * width + (x1 - 1)];
-        if (y1 > 0) sum -= integral[(y1 - 1) * width + x2];
-        if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * width + (x1 - 1)];
-
-        const area = (x2 - x1 + 1) * (y2 - y1 + 1);
-        const localMean = sum / area;
-        // Use the proportional adaptive offset instead of a fixed -8
-        const threshold = localMean - adaptiveOffset;
-        binary[y * width + x] = grayscale[y * width + x] < threshold ? 1 : 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const x1 = Math.max(0, x - halfBlock);
+          const y1 = Math.max(0, y - halfBlock);
+          const x2 = Math.min(width - 1, x + halfBlock);
+          const y2 = Math.min(height - 1, y + halfBlock);
+          let sum = integral[y2 * width + x2];
+          if (x1 > 0) sum -= integral[y2 * width + (x1 - 1)];
+          if (y1 > 0) sum -= integral[(y1 - 1) * width + x2];
+          if (x1 > 0 && y1 > 0) sum += integral[(y1 - 1) * width + (x1 - 1)];
+          const area = (x2 - x1 + 1) * (y2 - y1 + 1);
+          const localMean = sum / area;
+          const threshold = Math.min(globalThreshold, localMean - 8);
+          binary[y * width + x] = grayscale[y * width + x] < threshold ? 1 : 0;
+        }
       }
     }
 
     // 4. Find corner alignment markers
-    const markers = findCornerMarkers(binary, width, height);
+    const markers = findCornerMarkers(binary, width, height, isCamera);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
@@ -800,10 +811,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // 6. Get template layout for this exam's question count
     const layout = getTemplateLayout(numQuestions);
 
-    // 7. Detect student ID and answers using GRAYSCALE-based sampling for robustness
-    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(grayscale, binary, width, height, effectiveMarkers, layout);
+    // 7. Detect student ID and answers
+    // Camera: use grayscale-relative darkness (handles uneven lighting)
+    // Upload: use binary thresholded image (proven to work for clean scans)
+    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(
+      grayscale, binary, width, height, effectiveMarkers, layout, isCamera
+    );
     const { answers, multipleAnswers } = detectAnswersFromImage(
-      grayscale, binary, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
+      grayscale, binary, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion, isCamera
     );
 
     return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns };
@@ -832,9 +847,38 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── BUBBLE SAMPLING ───
-  // Sample a bubble region using GRAYSCALE values for more robust detection.
+  
+  // Binary-based sampling (original — proven for uploaded/scanned images)
+  const sampleBubbleBinary = (
+    binary: Uint8Array,
+    imgW: number,
+    imgH: number,
+    cx: number,
+    cy: number,
+    radiusX: number,
+    radiusY: number
+  ): number => {
+    let filled = 0, total = 0;
+    const rx = radiusX * 0.75;
+    const ry = radiusY * 0.75;
+    const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
+
+    for (let dy = -Math.floor(ry); dy <= Math.floor(ry); dy += step) {
+      for (let dx = -Math.floor(rx); dx <= Math.floor(rx); dx += step) {
+        if (rx > 0 && ry > 0 && (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) > 1) continue;
+        const px = Math.round(cx + dx);
+        const py = Math.round(cy + dy);
+        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
+          filled += binary[py * imgW + px];
+          total++;
+        }
+      }
+    }
+    return total > 0 ? filled / total : 0;
+  };
+
+  // Grayscale-relative sampling (for camera images — handles uneven lighting)
   // Returns a "darkness" score: 0 = white/empty, 1 = fully dark/filled.
-  // This is much more reliable than binary sampling for camera images.
   const sampleBubbleGrayscale = (
     grayscale: Uint8Array,
     imgW: number,
@@ -904,7 +948,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // ─── DETECT STUDENT ID ───
   const detectStudentIdFromImage = (
     grayscale: Uint8Array,
-    _binary: Uint8Array,
+    binary: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -913,7 +957,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       bottomLeft: { x: number; y: number };
       bottomRight: { x: number; y: number };
     },
-    layout: TemplateLayout
+    layout: TemplateLayout,
+    isCamera: boolean
   ): { studentId: string; doubleShadeColumns: number[] } => {
     const { id } = layout;
     const idDigits: number[] = [];
@@ -928,10 +973,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const idBubbleRX = bubbleRX * (3.5 / 3.8);
     const idBubbleRY = bubbleRY * (3.5 / 3.8);
 
-    console.log('[ID] BubbleR:', idBubbleRX.toFixed(1), 'x', idBubbleRY.toFixed(1));
+    console.log(`[ID] BubbleR: ${idBubbleRX.toFixed(1)}x${idBubbleRY.toFixed(1)}, mode=${isCamera ? 'camera' : 'upload'}`);
 
-    // Use lower threshold for grayscale-based detection — darkness scores are relative
-    const ID_FILL_THRESHOLD = 0.10;
+    // Different thresholds for camera vs upload
+    const ID_FILL_THRESHOLD = isCamera ? 0.10 : 0.25;
     const ID_DOUBLE_SHADE_RATIO = 0.55;
 
     for (let col = 0; col < 9; col++) {
@@ -945,8 +990,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const ny = id.firstRowNY + row * id.rowSpacingNY;
         const { px, py } = mapToPixel(markers, nx, ny);
 
-        // Use grayscale-based sampling for much better camera image detection
-        const fill = sampleBubbleGrayscale(grayscale, width, height, px, py, idBubbleRX, idBubbleRY);
+        // Use the appropriate sampling method based on image source
+        const fill = isCamera
+          ? sampleBubbleGrayscale(grayscale, width, height, px, py, idBubbleRX, idBubbleRY)
+          : sampleBubbleBinary(binary, width, height, px, py, idBubbleRX, idBubbleRY);
         fills.push(fill);
         if (fill > maxFill && fill > ID_FILL_THRESHOLD) {
           maxFill = fill;
@@ -955,13 +1002,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
 
-      // Check for double-shade: count how many bubbles are significantly filled
+      // Check for double-shade
       if (maxFill > ID_FILL_THRESHOLD) {
         const filledCount = fills.filter(
           f => f > ID_FILL_THRESHOLD && f >= maxFill * ID_DOUBLE_SHADE_RATIO
         ).length;
         if (filledCount > 1) {
-          doubleShadeColumns.push(col + 1); // 1-based column number
+          doubleShadeColumns.push(col + 1);
           console.log(`[ID] ⚠️ Col ${col} has DOUBLE SHADE (${filledCount} bubbles filled)`);
         }
       }
@@ -978,7 +1025,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // ─── DETECT ANSWERS ───
   const detectAnswersFromImage = (
     grayscale: Uint8Array,
-    _binary: Uint8Array,
+    binary: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -989,7 +1036,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     },
     layout: TemplateLayout,
     numQuestions: number,
-    choicesPerQuestion: number
+    choicesPerQuestion: number,
+    isCamera: boolean
   ): { answers: string[]; multipleAnswers: number[] } => {
     const answers = new Array<string>(numQuestions).fill('');
     const multipleAnswers: number[] = [];
@@ -1000,9 +1048,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
-    // Lower threshold for grayscale-based detection — darkness scores are relative
-    const FILL_THRESHOLD = 0.08;
-    // If a second bubble has fill >= this ratio of the max, it's considered a multiple answer
+    // Different thresholds for camera vs upload
+    const FILL_THRESHOLD = isCamera ? 0.08 : 0.20;
     const MULTI_ANSWER_RATIO = 0.45;
 
     for (const block of layout.answerBlocks) {
@@ -1019,8 +1066,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const ny = block.firstBubbleNY + rowInBlock * block.rowSpacingNY;
           const { px, py } = mapToPixel(markers, nx, ny);
 
-          // Use grayscale-based sampling for better camera image detection
-          const fill = sampleBubbleGrayscale(grayscale, width, height, px, py, bubbleRX, bubbleRY);
+          // Use the appropriate sampling method based on image source
+          const fill = isCamera
+            ? sampleBubbleGrayscale(grayscale, width, height, px, py, bubbleRX, bubbleRY)
+            : sampleBubbleBinary(binary, width, height, px, py, bubbleRX, bubbleRY);
           fills.push({ choice: choiceLabels[c], fill });
           if (fill > maxFill && fill > FILL_THRESHOLD) {
             maxFill = fill;
@@ -1028,14 +1077,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           }
         }
 
-        // Additional validation: the winner must be significantly darker than the average of the rest
-        // This avoids false detections from slight lighting variations
-        if (maxFill > FILL_THRESHOLD && fills.length > 1) {
+        // Camera only: additional validation to reject noise from uneven lighting
+        if (isCamera && maxFill > FILL_THRESHOLD && fills.length > 1) {
           const otherFills = fills.filter(f => f.choice !== selectedChoice).map(f => f.fill);
           const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
-          // The selected bubble must be at least 2x darker than the average of others
           if (maxFill < avgOther * 2.0 && maxFill < 0.15) {
-            // Not confident enough — this could be noise from uneven lighting
             console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (avgOther=${avgOther.toFixed(3)})`);
             selectedChoice = '';
             maxFill = 0;
@@ -1048,13 +1094,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
           );
           if (filledBubbles.length > 1) {
-            multipleAnswers.push(q); // Store 1-based question number
+            multipleAnswers.push(q);
             console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')}`);
           }
-        }
-
-        if (q <= 5 || selectedChoice) {
-          console.log(`[ANS] Q${q}: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} → ${selectedChoice || '(blank)'}`);
         }
 
         answers[qIndex] = selectedChoice;
@@ -1139,6 +1181,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         setMultipleAnswerQuestions([]);
         setIdDoubleShadeColumns([]);
         setCapturedImage(null);
+        setImageSource(null);
         setMode('select');
       } else {
         toast.error(result.error || 'Failed to save scan');
@@ -1354,6 +1397,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           <div className="p-4 flex justify-center gap-4">
             <Button variant="outline" onClick={() => {
               setCapturedImage(null);
+              setImageSource(null);
               setMode('select');
             }}>
               <RotateCcw className="w-4 h-4 mr-2" />
@@ -1638,6 +1682,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               setMultipleAnswerQuestions([]);
               setIdDoubleShadeColumns([]);
               setCapturedImage(null);
+              setImageSource(null);
               setMode('select');
             }}>
               <X className="w-4 h-4 mr-2" />
