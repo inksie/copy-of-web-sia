@@ -20,10 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { FileText, Download, Plus, Eye } from 'lucide-react';
+import { FileText, Download, Plus, Eye, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { collection, getDocs, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, deleteDoc, doc, serverTimestamp, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { generateTemplatePDF } from '@/lib/templatePdfGenerator';
 
@@ -60,6 +60,8 @@ export default function Templates() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState<Template | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
@@ -226,6 +228,27 @@ export default function Templates() {
     }
   };
 
+  const confirmDelete = (template: Template) => {
+    setTemplateToDelete(template);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDelete = async () => {
+    if (!templateToDelete) return;
+
+    try {
+      await deleteDoc(doc(db, 'templates', templateToDelete.id));
+      setTemplates((prev) => prev.filter((t) => t.id !== templateToDelete.id));
+      toast.success(`"${templateToDelete.name}" deleted successfully`);
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      toast.error('Failed to delete template');
+    } finally {
+      setShowDeleteDialog(false);
+      setTemplateToDelete(null);
+    }
+  };
+
   return (
     <div className="space-y-6 p-6">
       {/* Header */}
@@ -233,15 +256,6 @@ export default function Templates() {
         <h1 className="text-3xl font-bold text-foreground">Answer Sheet Templates</h1>
         <p className="text-muted-foreground mt-1">Create ZipGrade-inspired answer sheet templates for optical scanning.</p>
       </div>
-
-      {/* Create Template Button */}
-      <Button 
-        onClick={() => setShowCreateDialog(true)}
-        className="flex items-center gap-2"
-      >
-        <Plus className="w-4 h-4" />
-        Create New Template
-      </Button>
 
       {/* Loading State */}
       {loading ? (
@@ -285,11 +299,11 @@ export default function Templates() {
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground mb-4">
                 <div className="flex items-center gap-1">
                   <span className="font-medium">Choices:</span>
-                  <span>{template.choicesPerQuestion}</span>
+                  <span>A-{String.fromCharCode(64 + template.choicesPerQuestion)}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">Layout:</span>
-                  <span className="capitalize">{template.layout}</span>
+                  <span className="font-medium">Items:</span>
+                  <span>{template.numQuestions}</span>
                 </div>
               </div>
 
@@ -721,6 +735,31 @@ export default function Templates() {
             <Button onClick={() => previewTemplate && handleDownload(previewTemplate)}>
               <Download className="w-4 h-4 mr-2" />
               Download PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Delete Template</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>&quot;{templateToDelete?.name}&quot;</strong>? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

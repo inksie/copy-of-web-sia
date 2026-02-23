@@ -3,22 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   ArrowLeft,
   Edit2,
@@ -27,13 +11,15 @@ import {
   BarChart3,
   Tag,
   FilePlus,
+  CheckCircle,
+  Loader2,
 } from "lucide-react";
 import { getExamById, Exam } from "@/services/examService";
 import { AnswerKeyService } from "@/services/answerKeyService";
 import { ScanningService } from "@/services/scanningService";
 import { useAuth } from "@/contexts/AuthContext";
 import { db, auth } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, query, where, getDocs } from "firebase/firestore";
 import { toast } from "sonner";
 import { generateTemplatePDF } from "@/lib/templatePdfGenerator";
 
@@ -57,11 +43,8 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
     completed: 0,
     hasAnswerKey: false,
   });
-  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
-  const [newTemplate, setNewTemplate] = useState({
-    numQuestions: 20,
-    choicesPerQuestion: 4,
-  });
+  const [hasTemplate, setHasTemplate] = useState(false);
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
 
   useEffect(() => {
     async function fetchExam() {
@@ -101,6 +84,18 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
             }
           } catch (error) {
             console.error("Error fetching scanned results:", error);
+          }
+
+          // Check if a template already exists for this exam
+          try {
+            const templateQuery = query(
+              collection(db, 'templates'),
+              where('examId', '==', params.id)
+            );
+            const templateSnap = await getDocs(templateQuery);
+            setHasTemplate(!templateSnap.empty);
+          } catch (error) {
+            console.error("Error checking template:", error);
           }
         }
       } catch (error) {
@@ -164,26 +159,25 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
       return;
     }
 
+    if (hasTemplate) {
+      toast.error('A template has already been generated for this exam.');
+      return;
+    }
+
+    setCreatingTemplate(true);
+
     try {
-      // Check Firebase auth state
       const currentUser = auth.currentUser;
       console.log('🔍 Firebase Auth State:', {
         isAuthenticated: !!currentUser,
         uid: currentUser?.uid,
-        email: currentUser?.email,
-      });
-
-      console.log('🔍 Creating template with user:', {
-        userId: user.id,
-        instructorId: user.instructorId,
-        examId: params.id,
       });
 
       const templateData = {
         name: exam.title,
         description: exam.subject || 'Answer Sheet Template',
-        numQuestions: newTemplate.numQuestions,
-        choicesPerQuestion: newTemplate.choicesPerQuestion,
+        numQuestions: exam.num_items,
+        choicesPerQuestion: exam.choices_per_item,
         layout: 'single',
         includeStudentId: true,
         studentIdLength: 10,
@@ -194,19 +188,9 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
         createdAt: serverTimestamp(),
       };
 
-      console.log('📄 Template data:', templateData);
-
-      // Verify Firebase is initialized
-      console.log('🔥 Firebase DB:', db.app.name);
-
       await addDoc(collection(db, 'templates'), templateData);
       
-      toast.success('✅ Template created successfully!');
-      
-      // Generate and download PDF
-      toast.info('📄 Generating PDF...');
-      
-      // Generate exam code: first 2 letters of class + last 2 letters of exam name + 2 digits of day
+      // Generate exam code
       const classPrefix = exam.className 
         ? exam.className.substring(0, 2).toUpperCase()
         : 'XX';
@@ -219,30 +203,24 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
       await generateTemplatePDF({
         name: exam.title,
         description: exam.subject || 'Answer Sheet Template',
-        numQuestions: newTemplate.numQuestions,
-        choicesPerQuestion: newTemplate.choicesPerQuestion,
+        numQuestions: exam.num_items,
+        choicesPerQuestion: exam.choices_per_item,
         examName: exam.title,
         examCode: examCode,
       });
       
-      setShowCreateTemplate(false);
-      
-      // Reset form
-      setNewTemplate({
-        numQuestions: 20,
-        choicesPerQuestion: 4,
-      });
+      setHasTemplate(true);
+      toast.success('✅ Template created and downloaded!');
     } catch (error: any) {
       console.error('❌ Error creating template:', error);
-      console.error('❌ Error code:', error?.code);
-      console.error('❌ Error message:', error?.message);
-      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       
       if (error?.code === 'permission-denied') {
         toast.error('Permission denied. Please check if you are logged in and try again.');
       } else {
         toast.error(`Failed to create template: ${error?.message || 'Unknown error'}`);
       }
+    } finally {
+      setCreatingTemplate(false);
     }
   };
 
@@ -255,11 +233,14 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
       color: "bg-blue-50 text-primary",
     },
     {
-      icon: FilePlus,
-      label: "Create Template",
-      description: "Generate answer sheet template",
-      color: "bg-green-50 text-green-600",
-      onClick: () => setShowCreateTemplate(true),
+      icon: hasTemplate ? CheckCircle : creatingTemplate ? Loader2 : FilePlus,
+      label: hasTemplate ? "Template Created" : creatingTemplate ? "Generating..." : "Create Template",
+      description: hasTemplate
+        ? "Answer sheet template already generated"
+        : "Auto-generate and download answer sheet PDF",
+      color: hasTemplate ? "bg-green-100 text-green-600" : "bg-green-50 text-green-600",
+      onClick: hasTemplate || creatingTemplate ? undefined : () => handleCreateTemplate(),
+      disabled: hasTemplate || creatingTemplate,
     },
     {
       icon: Smartphone,
@@ -426,6 +407,14 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
               );
             }
 
+            if (btn.disabled) {
+              return (
+                <div key={btn.label} className="opacity-70 cursor-not-allowed">
+                  {content}
+                </div>
+              );
+            }
+
             return (
               <Link key={btn.label} href={btn.href || '#'} className="group">
                 {content}
@@ -434,65 +423,6 @@ export default function ExamDetails({ params }: ExamDetailsProps) {
           })}
         </div>
       </div>
-
-      {/* Create Template Dialog */}
-      <Dialog open={showCreateTemplate} onOpenChange={setShowCreateTemplate}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Create Answer Sheet Template</DialogTitle>
-            <DialogDescription>
-              Create a ZipGrade-inspired answer sheet template for {exam?.title}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="num-questions">Number of Questions</Label>
-                <Select
-                  value={newTemplate.numQuestions.toString()}
-                  onValueChange={(value) => setNewTemplate({ ...newTemplate, numQuestions: parseInt(value) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="20">20 Questions</SelectItem>
-                    <SelectItem value="50">50 Questions</SelectItem>
-                    <SelectItem value="100">100 Questions</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="choices">Choices per Question</Label>
-                <Select
-                  value={newTemplate.choicesPerQuestion.toString()}
-                  onValueChange={(value) => setNewTemplate({ ...newTemplate, choicesPerQuestion: parseInt(value) })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="3">3 Choices (A, B, C)</SelectItem>
-                    <SelectItem value="4">4 Choices (A, B, C, D)</SelectItem>
-                    <SelectItem value="5">5 Choices (A, B, C, D, E)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-4">
-              <Button variant="outline" onClick={() => setShowCreateTemplate(false)} className="flex-1">
-                Cancel
-              </Button>
-              <Button onClick={handleCreateTemplate} className="flex-1">
-                Create Template
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

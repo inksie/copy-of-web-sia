@@ -538,7 +538,7 @@ export default function ClassManagement() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-3 gap-4">
+                <div className="mt-4">
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">
                       Total Students
@@ -548,33 +548,8 @@ export default function ClassManagement() {
                       {classItem.students.length}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">
-                      Scanned
-                    </p>
-                    <p className="text-sm font-medium text-primary">
-                      {classItem.students.length} / {classItem.students.length}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">
-                      Average Score
-                    </p>
-                    <p className="text-sm font-medium text-muted-foreground">N/A</p>
-                  </div>
                 </div>
 
-                <div className="mt-4">
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-primary h-2 rounded-full transition-all"
-                      style={{ width: "100%" }}
-                    />
-                  </div>
-                  <p className="text-xs text-right text-muted-foreground mt-1">
-                    100%
-                  </p>
-                </div>
               </CardContent>
             </Card>
           ))}

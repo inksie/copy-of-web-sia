@@ -36,6 +36,8 @@ import {
   type ExamFormData,
 } from "@/services/examService";
 import { AnswerKeyService } from "@/services/answerKeyService";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 interface ExamWithStatus extends Exam {
   answerKeyStatus?: {
@@ -43,6 +45,7 @@ interface ExamWithStatus extends Exam {
     completed: number;
     hasAnswerKey: boolean;
   };
+  hasTemplate?: boolean;
 }
 
 export default function Exams() {
@@ -104,17 +107,20 @@ export default function Exams() {
       // Fetch answer key status for each exam
       const examsWithStatus = await Promise.all(
         activeExams.map(async (exam) => {
+          let answerKeyStatus = {
+            total: exam.num_items,
+            completed: 0,
+            hasAnswerKey: false,
+          };
+
           try {
             const result = await AnswerKeyService.getAnswerKeyByExamId(exam.id);
             if (result.success && result.data) {
               const answersCount = result.data.answers.length;
-              return {
-                ...exam,
-                answerKeyStatus: {
-                  total: exam.num_items,
-                  completed: answersCount,
-                  hasAnswerKey: true,
-                },
+              answerKeyStatus = {
+                total: exam.num_items,
+                completed: answersCount,
+                hasAnswerKey: true,
               };
             }
           } catch (error) {
@@ -122,18 +128,25 @@ export default function Exams() {
               `Error fetching answer key for exam ${exam.id}:`,
               error,
             );
-            if (error instanceof Error) {
-              console.error("Error details:", error.message, error.stack);
-            }
+          }
+
+          // Check if a template exists for this exam
+          let hasTemplate = false;
+          try {
+            const templateQuery = query(
+              collection(db, 'templates'),
+              where('examId', '==', exam.id)
+            );
+            const templateSnap = await getDocs(templateQuery);
+            hasTemplate = !templateSnap.empty;
+          } catch (error) {
+            console.error(`Error checking template for exam ${exam.id}:`, error);
           }
 
           return {
             ...exam,
-            answerKeyStatus: {
-              total: exam.num_items,
-              completed: 0,
-              hasAnswerKey: false,
-            },
+            answerKeyStatus,
+            hasTemplate,
           };
         }),
       );
@@ -232,15 +245,6 @@ export default function Exams() {
       exam.subject.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const getTotalSheets = (exam: Exam) => {
-    return (
-      exam.generated_sheets?.reduce(
-        (sum, s) => sum + (s.sheet_count || 0),
-        0,
-      ) || 0
-    );
-  };
-
   return (
     <div className="page-container">
       {/* Header */}
@@ -291,7 +295,7 @@ export default function Exams() {
                 Answer Key
               </TableHead>
               <TableHead className="text-center hidden lg:table-cell">
-                Sheets Generated
+                Template
               </TableHead>
               <TableHead className="text-center">Actions</TableHead>
             </TableRow>
@@ -362,7 +366,15 @@ export default function Exams() {
                     )}
                   </TableCell>
                   <TableCell className="text-center hidden lg:table-cell">
-                    {getTotalSheets(exam)}
+                    {exam.hasTemplate ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
+                        Yes
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground">
+                        No
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-center gap-1">

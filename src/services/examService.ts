@@ -5,6 +5,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   query,
   where,
   serverTimestamp,
@@ -298,16 +299,26 @@ export async function updateExam(
 }
 
 /**
- * Archive an exam
+ * Archive an exam and delete its associated template
  */
 export async function archiveExam(examId: string): Promise<void> {
   try {
+    // Archive the exam
     const docRef = doc(db, "exams", examId);
     await updateDoc(docRef, {
       isArchived: true,
       archivedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    // Delete any templates linked to this exam
+    const templateQuery = query(
+      collection(db, "templates"),
+      where("examId", "==", examId)
+    );
+    const templateSnap = await getDocs(templateQuery);
+    const deletePromises = templateSnap.docs.map((d) => deleteDoc(d.ref));
+    await Promise.all(deletePromises);
   } catch (error) {
     console.error("Error archiving exam:", error);
     throw new Error("Failed to archive exam");

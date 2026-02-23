@@ -40,6 +40,12 @@ interface ClassResult {
   averageScore: number;
 }
 
+interface ExamStats {
+  examId: string;
+  scannedCount: number;
+  averageScore: number;
+}
+
 interface StudentResult {
   studentId: string;
   studentName: string;
@@ -292,6 +298,9 @@ export default function Results() {
   const [exams, setExams] = useState<Exam[]>([]);
   const [classResults, setClassResults] = useState<ClassResult[]>([]);
   const [selectedClass, setSelectedClass] = useState<ClassResult | null>(null);
+  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [classExamsList, setClassExamsList] = useState<Exam[]>([]);
+  const [examStats, setExamStats] = useState<Record<string, ExamStats>>({});
   const [, setSelectedClassData] = useState<Class | null>(null);
   const [studentResults, setStudentResults] = useState<StudentResult[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -390,10 +399,54 @@ export default function Results() {
     fetchData();
   }, [fetchData]);
 
-  // Fetch student results for a selected class
-  const fetchStudentResults = useCallback(async (classResult: ClassResult) => {
-    setLoadingStudents(true);
+  // Handle clicking a class — show exams for that class
+  const handleClassClick = useCallback(async (classResult: ClassResult) => {
     setSelectedClass(classResult);
+    setSelectedExam(null);
+    setStudentResults([]);
+    setExamStats({});
+
+    // Find exams linked to this class
+    const classExams = exams.filter(e => 
+      e.className === classResult.className || (e as any).classId === classResult.classId
+    );
+    setClassExamsList(classExams);
+
+    // Fetch stats for each exam
+    const stats: Record<string, ExamStats> = {};
+    for (const exam of classExams) {
+      let scannedCount = 0;
+      let totalScore = 0;
+      let totalMaxScore = 0;
+
+      try {
+        const scannedResultsQuery = query(
+          collection(db, 'scannedResults'),
+          where('examId', '==', exam.id)
+        );
+        const scannedSnapshot = await getDocs(scannedResultsQuery);
+        scannedSnapshot.forEach(doc => {
+          const data = doc.data();
+          if (!data.isNullId) {
+            scannedCount++;
+            totalScore += data.score || 0;
+            totalMaxScore += data.totalQuestions || 0;
+          }
+        });
+      } catch (err) {
+        console.error('Error fetching exam stats:', err);
+      }
+
+      const averageScore = totalMaxScore > 0 ? Math.round((totalScore / totalMaxScore) * 100) : 0;
+      stats[exam.id] = { examId: exam.id, scannedCount, averageScore };
+    }
+    setExamStats(stats);
+  }, [exams]);
+
+  // Fetch student results for a selected exam within a class
+  const fetchStudentResults = useCallback(async (classResult: ClassResult, exam: Exam) => {
+    setLoadingStudents(true);
+    setSelectedExam(exam);
     
     // Find the full class data
     const fullClass = classes.find(c => c.id === classResult.classId);
@@ -401,10 +454,7 @@ export default function Results() {
 
     try {
       const students = fullClass?.students || [];
-      const classExams = exams.filter(e => 
-        e.className === classResult.className || (e as any).classId === classResult.classId
-      );
-      const examIds = classExams.map(e => e.id);
+      const examIds = [exam.id];
 
       // Build student results
       const results: StudentResult[] = [];
@@ -512,7 +562,7 @@ export default function Results() {
     } finally {
       setLoadingStudents(false);
     }
-  }, [classes, exams]);
+  }, [classes]);
 
   // Export functions
   const exportToPDF = () => {
@@ -659,8 +709,112 @@ export default function Results() {
     );
   }
 
-  // Render class detail view
-  if (selectedClass) {
+  // Render exam list for selected class
+  if (selectedClass && !selectedExam) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-3xl font-bold text-[#1a472a]">Results & Analytics</h1>
+          <p className="text-gray-600 mt-1">View and export grading results by class</p>
+        </div>
+
+        {/* Class Info Bar */}
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => {
+              setSelectedClass(null);
+              setClassExamsList([]);
+            }}
+            className="w-10 h-10 rounded-full bg-[#1a472a] text-white flex items-center justify-center hover:bg-[#2d6b47] transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h2 className="text-xl font-bold text-[#1a472a]">{selectedClass.className}</h2>
+            <p className="text-gray-600 text-sm">
+              {selectedClass.totalStudents} students • {selectedClass.schedule}
+            </p>
+          </div>
+        </div>
+
+        {/* Exams List */}
+        {classExamsList.length === 0 ? (
+          <Card className="p-12 border text-center">
+            <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+            <h3 className="text-lg font-semibold text-gray-700">No Exams Found</h3>
+            <p className="text-gray-500 mt-2">No exams are linked to this class yet.</p>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {classExamsList.map((exam) => {
+              const stats = examStats[exam.id];
+              const scanned = stats?.scannedCount || 0;
+              const avg = stats?.averageScore || 0;
+              const total = selectedClass.totalStudents;
+              const progressPercent = total > 0 ? Math.round((scanned / total) * 100) : 0;
+
+              return (
+                <Card
+                  key={exam.id}
+                  className="p-5 border hover:shadow-md transition-shadow cursor-pointer hover:border-[#1a472a]/30"
+                  onClick={() => fetchStudentResults(selectedClass, exam)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <FileText className="w-6 h-6 text-blue-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-[#1a472a]">{exam.title}</h3>
+                        <p className="text-sm text-gray-600">
+                          {exam.num_items} items • {exam.choices_per_item} choices • {exam.subject}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-gray-400" />
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500">Scanned</p>
+                      <p className="text-lg font-bold text-[#1a472a]">
+                        {scanned} / {total}
+                      </p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500">Average Score</p>
+                      <p className="text-lg font-bold text-[#1a472a]">
+                        {avg}%
+                      </p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500">Completion</p>
+                      <p className="text-lg font-bold text-[#1a472a]">
+                        {progressPercent}%
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-[#1a472a] rounded-full transition-all duration-300"
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Render student results for selected exam
+  if (selectedClass && selectedExam) {
     return (
       <div className="space-y-6">
         {/* Header */}
@@ -698,12 +852,12 @@ export default function Results() {
           </div>
         </div>
 
-        {/* Class Info Bar */}
+        {/* Class / Exam Info Bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button 
               onClick={() => {
-                setSelectedClass(null);
+                setSelectedExam(null);
                 setStudentResults([]);
               }}
               className="w-10 h-10 rounded-full bg-[#1a472a] text-white flex items-center justify-center hover:bg-[#2d6b47] transition-colors"
@@ -711,9 +865,9 @@ export default function Results() {
               <ChevronLeft className="w-5 h-5" />
             </button>
             <div>
-              <h2 className="text-xl font-bold text-[#1a472a]">{selectedClass.className}</h2>
+              <h2 className="text-xl font-bold text-[#1a472a]">{selectedExam.title}</h2>
               <p className="text-gray-600 text-sm">
-                {selectedClass.totalStudents} students • {selectedClass.schedule}
+                {selectedClass.className} • {selectedExam.num_items} items • {selectedExam.subject}
               </p>
             </div>
           </div>
@@ -829,15 +983,11 @@ export default function Results() {
       ) : (
         <div className="space-y-4">
           {classResults.map((classResult) => {
-            const progressPercent = classResult.totalStudents > 0 
-              ? Math.round((classResult.scannedCount / classResult.totalStudents) * 100) 
-              : 0;
-            
             return (
               <Card
                 key={classResult.classId}
                 className="p-6 border hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => fetchStudentResults(classResult)}
+                onClick={() => handleClassClick(classResult)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
@@ -854,7 +1004,7 @@ export default function Results() {
                   <ChevronRight className="w-5 h-5 text-gray-400" />
                 </div>
 
-                <div className="mt-4 grid grid-cols-3 gap-4">
+                <div className="mt-4">
                   <div className="bg-gray-50 rounded-lg p-3">
                     <p className="text-xs text-gray-500">Total Students</p>
                     <p className="text-lg font-bold text-[#1a472a] flex items-center gap-1">
@@ -862,30 +1012,8 @@ export default function Results() {
                       {classResult.totalStudents}
                     </p>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Scanned</p>
-                    <p className="text-lg font-bold text-[#1a472a]">
-                      {classResult.scannedCount} / {classResult.totalStudents}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Average Score</p>
-                    <p className="text-lg font-bold text-[#1a472a]">
-                      {classResult.averageScore}%
-                    </p>
-                  </div>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="mt-4">
-                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-[#1a472a] rounded-full transition-all duration-300"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                  <p className="text-right text-xs text-gray-500 mt-1">{progressPercent}%</p>
-                </div>
               </Card>
             );
           })}
