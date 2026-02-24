@@ -188,7 +188,38 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     setCapturedImage(null);
   };
 
-  // Capture photo from camera
+  // Get the guide frame crop region as fractions of the video dimensions
+  const getGuideCropRegion = (videoWidth: number, videoHeight: number): { x: number; y: number; w: number; h: number } => {
+    const t = getTemplateType();
+    // These match the CSS guide overlay exactly
+    const guideWidthFraction = t === 20 ? 0.75 : t === 50 ? 0.55 : 0.70;
+    const paperAspect = t === 20 ? (105 / 148.5) : t === 50 ? (105 / 297) : (210 / 297); // width / height
+
+    // The video element is displayed as w-full h-auto, so display matches native aspect.
+    // The guide overlay is centered (flexbox) with a percentage of the display width and constrained by aspect ratio.
+    
+    // Guide display width = guideWidthFraction * displayWidth
+    // Guide display height = guideDisplayWidth / paperAspect
+    // But it can't exceed the display height, so clamp.
+    
+    // In normalized coordinates (0-1 of video):
+    let guideW = guideWidthFraction; // fraction of video width
+    let guideH = (guideW * videoWidth) / (paperAspect * videoHeight); // fraction of video height
+
+    // If the guide is taller than the video, clamp to video height and recalculate width
+    if (guideH > 0.95) {
+      guideH = 0.95;
+      guideW = (guideH * videoHeight * paperAspect) / videoWidth;
+    }
+
+    // Center the crop
+    const x = (1 - guideW) / 2;
+    const y = (1 - guideH) / 2;
+
+    return { x, y, w: guideW, h: guideH };
+  };
+
+  // Capture photo from camera — cropped to the guide frame
   const capturePhoto = () => {
     if (!videoRef.current || !canvasRef.current) return;
     
@@ -198,9 +229,24 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     if (!ctx) return;
     
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    
+    // Calculate the crop region matching the guide overlay
+    const crop = getGuideCropRegion(vw, vh);
+    const sx = Math.round(crop.x * vw);
+    const sy = Math.round(crop.y * vh);
+    const sw = Math.round(crop.w * vw);
+    const sh = Math.round(crop.h * vh);
+    
+    // Set canvas to the cropped size
+    canvas.width = sw;
+    canvas.height = sh;
+    
+    // Draw only the cropped region
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    
+    console.log(`[Capture] Video: ${vw}x${vh}, Crop: x=${sx} y=${sy} w=${sw} h=${sh} (template=${getTemplateType()})`);
     
     const imageData = canvas.toDataURL('image/png');
     setCapturedImage(imageData);
