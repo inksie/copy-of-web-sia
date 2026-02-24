@@ -689,94 +689,102 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
 
     // 100‑question full page  210 × 297 mm
-    // Marker centers: TL (3, 3)  BR (200, 213.5)  →  frame 197 × 210.5 mm
+    // Marker centers: TL (6.5, 6.5)  BR (203.5, 217)  →  frame 197 × 210.5 mm
     //
-    // CALIBRATION: The firstBubbleNX values are empirically corrected.
-    // The PDF draws bubbles at bx + numW (numW=12mm from block left edge).
-    // The original NX values were computed from bx alone, causing a leftward
-    // shift of ~1 bubble spacing. Adding 5.0mm corrects this.
+    // All coordinates are measured from TL marker center.
+    // PDF draws bubbles at bx + numW (numW=12mm from block left edge).
+    // First bubble center = bx + 12, and we subtract TL marker center X (6.5).
     const fw = 197, fh = 210.5;
-    const xCorrection = 5.0;  // mm – empirical shift to align with actual bubble centers
     return {
       id: {
         // idStartX=21 page mm → (21 - 6.5) = 14.5 mm from TL marker center
         firstColNX: 14.5 / fw,
-        // idBubbleY=48 page mm (with logo) → (48 - 6.5) = 41.5 mm from TL marker center
+        // idBubbleY=48 page mm → (48 - 6.5) = 41.5 mm from TL marker center
         firstRowNY: 41.5 / fh,
         colSpacingNX: 4.5 / fw,
         rowSpacingNY: 4.8 / fh,
       },
       answerBlocks: [
         // Top row (beside ID section)
+        // Q41-50: bx=83.85, first bubble x=83.85+12=95.85, y=48+4.5=52.5
         {
           startQ: 41, endQ: 50,
-          firstBubbleNX: (83.35 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
+          firstBubbleNX: (95.85 - 6.5) / fw,   // 89.35
+          firstBubbleNY: (52.5 - 6.5) / fh,    // 46.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q71-80: bx=149.35, first bubble x=149.35+12=161.35, y=52.5
         {
           startQ: 71, endQ: 80,
-          firstBubbleNX: (148.85 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
+          firstBubbleNX: (161.35 - 6.5) / fw,  // 154.85
+          firstBubbleNY: (52.5 - 6.5) / fh,    // 46.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
-        // Bottom grid – row 0
+        // Bottom grid – row 0 (by=102, first bubble y=102+4.5=106.5)
+        // Q1-10: bx=19.36, first bubble x=19.36+12=31.36
         {
           startQ: 1, endQ: 10,
-          firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNX: (31.36 - 6.5) / fw,   // 24.86
+          firstBubbleNY: (106.5 - 6.5) / fh,   // 100.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q21-30: bx=64.52, first bubble x=76.52
         {
           startQ: 21, endQ: 30,
-          firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNX: (76.52 - 6.5) / fw,   // 70.02
+          firstBubbleNY: (106.5 - 6.5) / fh,   // 100.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q51-60: bx=109.68, first bubble x=121.68
         {
           startQ: 51, endQ: 60,
-          firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNX: (121.68 - 6.5) / fw,  // 115.18
+          firstBubbleNY: (106.5 - 6.5) / fh,   // 100.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q81-90: bx=154.84, first bubble x=166.84
         {
           startQ: 81, endQ: 90,
-          firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNX: (166.84 - 6.5) / fw,  // 160.34
+          firstBubbleNY: (106.5 - 6.5) / fh,   // 100.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
-        // Bottom grid – row 1
+        // Bottom grid – row 1 (by=158, first bubble y=158+4.5=162.5)
+        // Q11-20: first bubble x=31.36
         {
           startQ: 11, endQ: 20,
-          firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNX: (31.36 - 6.5) / fw,   // 24.86
+          firstBubbleNY: (162.5 - 6.5) / fh,   // 156.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q31-40: first bubble x=76.52
         {
           startQ: 31, endQ: 40,
-          firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNX: (76.52 - 6.5) / fw,   // 70.02
+          firstBubbleNY: (162.5 - 6.5) / fh,   // 156.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q61-70: first bubble x=121.68
         {
           startQ: 61, endQ: 70,
-          firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNX: (121.68 - 6.5) / fw,  // 115.18
+          firstBubbleNY: (162.5 - 6.5) / fh,   // 156.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
+        // Q91-100: first bubble x=166.84
         {
           startQ: 91, endQ: 100,
-          firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNX: (166.84 - 6.5) / fw,  // 160.34
+          firstBubbleNY: (162.5 - 6.5) / fh,   // 156.0
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
@@ -875,6 +883,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const markers = findCornerMarkers(binary, width, height, isCamera);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
+      'TR:', Math.round(markers.topRight.x), Math.round(markers.topRight.y),
+      'BL:', Math.round(markers.bottomLeft.x), Math.round(markers.bottomLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
 
     // 5. Fallback: use image bounds with small margin
@@ -886,6 +896,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           bottomLeft: { x: width * 0.02, y: height * 0.98 },
           bottomRight: { x: width * 0.98, y: height * 0.98 },
         };
+    
+    if (!markers.found) {
+      console.warn('[OMR] ⚠️ Using FALLBACK markers (image bounds). Detection accuracy will be reduced.');
+    }
+
+    const frameW = effectiveMarkers.topRight.x - effectiveMarkers.topLeft.x;
+    const frameH = effectiveMarkers.bottomLeft.y - effectiveMarkers.topLeft.y;
+    console.log(`[OMR] Frame: ${Math.round(frameW)}x${Math.round(frameH)}px, template=${numQuestions}q`);
 
     // 6. Get template layout for this exam's question count
     const layout = getTemplateLayout(numQuestions);
@@ -968,8 +986,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusY: number
   ): number => {
     let count = 0;
-    const rx = radiusX * 0.70;
-    const ry = radiusY * 0.70;
+    const rx = radiusX * 0.75;
+    const ry = radiusY * 0.75;
     const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
 
     // Collect pixel values within the ellipse
@@ -994,9 +1012,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // Also sample the surrounding area (ring around bubble) for local contrast reference
     let surroundSum = 0;
     let surroundCount = 0;
-    const outerRX = radiusX * 1.5;
-    const outerRY = radiusY * 1.5;
-    const outerStep = Math.max(1, Math.floor(Math.min(outerRX, outerRY) / 4));
+    const outerRX = radiusX * 2.0;
+    const outerRY = radiusY * 2.0;
+    const outerStep = Math.max(1, Math.floor(Math.min(outerRX, outerRY) / 5));
     
     for (let dy = -Math.floor(outerRY); dy <= Math.floor(outerRY); dy += outerStep) {
       for (let dx = -Math.floor(outerRX); dx <= Math.floor(outerRX); dx += outerStep) {
@@ -1019,7 +1037,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // Darkness score: how much darker is this bubble compared to its surroundings
     // A filled bubble will be significantly darker than the local background
     if (localBg <= 0) return 0;
-    const darkness = Math.max(0, (localBg - mean) / localBg);
+    const relDarkness = Math.max(0, (localBg - mean) / localBg);
+    
+    // Also consider absolute darkness — pencil marks on white paper are typically < 140
+    // This helps detect marks even when local background isn't perfectly white
+    const absDarkness = mean < 180 ? Math.max(0, (200 - mean) / 200) * 0.5 : 0;
+    
+    const darkness = Math.max(relDarkness, absDarkness);
     
     return darkness;
   };
@@ -1055,10 +1079,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     console.log(`[ID] BubbleR: ${idBubbleRX.toFixed(1)}x${idBubbleRY.toFixed(1)}, mode=${isCamera ? 'camera' : 'upload'}`);
 
     // Different thresholds for camera vs upload
-    const ID_FILL_THRESHOLD = isCamera ? 0.10 : 0.25;
+    const ID_FILL_THRESHOLD = isCamera ? 0.06 : 0.20;
     const ID_DOUBLE_SHADE_RATIO = 0.55;
 
-    for (let col = 0; col < 9; col++) {
+    for (let col = 0; col < 10; col++) {
       let maxFill = 0;
       let detectedDigit = 0;
       let hasDetection = false;
@@ -1128,7 +1152,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
     // Different thresholds for camera vs upload
-    const FILL_THRESHOLD = isCamera ? 0.08 : 0.20;
+    const FILL_THRESHOLD = isCamera ? 0.06 : 0.20;
     const MULTI_ANSWER_RATIO = 0.45;
 
     for (const block of layout.answerBlocks) {
@@ -1160,7 +1184,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (isCamera && maxFill > FILL_THRESHOLD && fills.length > 1) {
           const otherFills = fills.filter(f => f.choice !== selectedChoice).map(f => f.fill);
           const avgOther = otherFills.reduce((a, b) => a + b, 0) / otherFills.length;
-          if (maxFill < avgOther * 2.0 && maxFill < 0.15) {
+          // Only reject if the best fill is barely above average of others (noise)
+          // AND the fill is very weak (< 0.10). Higher fills are likely real marks.
+          if (maxFill < avgOther * 1.8 && maxFill < 0.10) {
             console.log(`[ANS] Q${q}: rejected weak detection ${selectedChoice}=${maxFill.toFixed(3)} (avgOther=${avgOther.toFixed(3)})`);
             selectedChoice = '';
             maxFill = 0;
