@@ -46,7 +46,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingCanvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const detectionLoopRef = useRef<number | null>(null);
   
   // State
@@ -198,75 +197,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
         // Detect markers
         const markers = findCornerMarkers(binary, w, h, true);
-        
-        const tlOk = markers.topLeft && markers.found;
-        const trOk = markers.topRight && markers.found;
-        const blOk = markers.bottomLeft && markers.found;
-        const brOk = markers.bottomRight && markers.found;
-
         setMarkersDetected(markers.found);
-
-        // Draw overlay on the overlay canvas
-        const overlay = overlayCanvasRef.current;
-        if (overlay) {
-          const oCtx = overlay.getContext('2d');
-          if (oCtx) {
-            overlay.width = overlay.offsetWidth * (window.devicePixelRatio || 1);
-            overlay.height = overlay.offsetHeight * (window.devicePixelRatio || 1);
-            oCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-            oCtx.clearRect(0, 0, overlay.offsetWidth, overlay.offsetHeight);
-
-            const displayW = overlay.offsetWidth;
-            const displayH = overlay.offsetHeight;
-            // Scale from detection coords to display coords
-            const scaleX = displayW / w;
-            const scaleY = displayH / h;
-
-            const drawCorner = (cx: number, cy: number, found: boolean) => {
-              const dx = cx * scaleX;
-              const dy = cy * scaleY;
-              const size = 16;
-              
-              oCtx.strokeStyle = found ? '#22c55e' : '#ef4444';
-              oCtx.lineWidth = 3;
-              oCtx.fillStyle = found ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.2)';
-              
-              // Draw a circle at the marker position
-              oCtx.beginPath();
-              oCtx.arc(dx, dy, size, 0, Math.PI * 2);
-              oCtx.fill();
-              oCtx.stroke();
-
-              // Draw crosshair
-              oCtx.beginPath();
-              oCtx.moveTo(dx - size * 0.6, dy);
-              oCtx.lineTo(dx + size * 0.6, dy);
-              oCtx.moveTo(dx, dy - size * 0.6);
-              oCtx.lineTo(dx, dy + size * 0.6);
-              oCtx.stroke();
-            };
-
-            drawCorner(markers.topLeft.x, markers.topLeft.y, !!tlOk);
-            drawCorner(markers.topRight.x, markers.topRight.y, !!trOk);
-            drawCorner(markers.bottomLeft.x, markers.bottomLeft.y, !!blOk);
-            drawCorner(markers.bottomRight.x, markers.bottomRight.y, !!brOk);
-
-            // Draw connecting lines between markers if all found
-            if (markers.found) {
-              oCtx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
-              oCtx.lineWidth = 2;
-              oCtx.setLineDash([6, 4]);
-              oCtx.beginPath();
-              oCtx.moveTo(markers.topLeft.x * scaleX, markers.topLeft.y * scaleY);
-              oCtx.lineTo(markers.topRight.x * scaleX, markers.topRight.y * scaleY);
-              oCtx.lineTo(markers.bottomRight.x * scaleX, markers.bottomRight.y * scaleY);
-              oCtx.lineTo(markers.bottomLeft.x * scaleX, markers.bottomLeft.y * scaleY);
-              oCtx.closePath();
-              oCtx.stroke();
-              oCtx.setLineDash([]);
-            }
-          }
-        }
       } catch (e) {
         // Ignore detection errors in live preview
       }
@@ -1498,12 +1429,54 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               muted
               className="w-full h-full object-cover"
             />
-            {/* Real-time marker detection overlay */}
-            <canvas
-              ref={overlayCanvasRef}
-              className="absolute inset-0 w-full h-full pointer-events-none"
-              style={{ zIndex: 10 }}
-            />
+            {/* Fixed guide frame overlay — corners match template marker positions */}
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                zIndex: 10,
+                top: '6%',
+                left: '6%',
+                right: '6%',
+                bottom: '6%',
+              }}
+            >
+              {/* Full rectangle border */}
+              <div
+                className="w-full h-full"
+                style={{
+                  border: `2px solid ${markersDetected ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.5)'}`,
+                  transition: 'border-color 0.3s',
+                }}
+              />
+              {/* Corner brackets — Top Left */}
+              <div className="absolute top-0 left-0" style={{
+                width: 28, height: 28,
+                borderTop: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                borderLeft: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                transition: 'border-color 0.3s',
+              }} />
+              {/* Corner brackets — Top Right */}
+              <div className="absolute top-0 right-0" style={{
+                width: 28, height: 28,
+                borderTop: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                borderRight: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                transition: 'border-color 0.3s',
+              }} />
+              {/* Corner brackets — Bottom Left */}
+              <div className="absolute bottom-0 left-0" style={{
+                width: 28, height: 28,
+                borderBottom: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                borderLeft: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                transition: 'border-color 0.3s',
+              }} />
+              {/* Corner brackets — Bottom Right */}
+              <div className="absolute bottom-0 right-0" style={{
+                width: 28, height: 28,
+                borderBottom: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                borderRight: `4px solid ${markersDetected ? '#22c55e' : '#fff'}`,
+                transition: 'border-color 0.3s',
+              }} />
+            </div>
             {/* Status indicator */}
             <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none" style={{ zIndex: 20 }}>
               <div className={`px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-2 transition-all duration-300 ${
