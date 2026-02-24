@@ -267,6 +267,217 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     reader.readAsDataURL(file);
   };
 
+  // ─── DOCUMENT SCANNER: Perspective correction + enhancement ───
+  // Detects the paper quadrilateral and warps it to a flat rectangle,
+  // similar to CamScanner / Google Lens document scanning
+  const documentScan = (srcCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const ctx = srcCanvas.getContext('2d');
+    if (!ctx) return srcCanvas;
+    
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    const srcData = ctx.getImageData(0, 0, w, h);
+    const src = srcData.data;
+    
+    // 1. Convert to grayscale for edge detection
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < src.length; i += 4) {
+      gray[i / 4] = Math.round(0.299 * src[i] + 0.587 * src[i + 1] + 0.114 * src[i + 2]);
+    }
+    
+    // 2. Detect paper edges by scanning for bright-to-dark transitions
+    //    Paper is white/bright, background is darker
+    const brightThresh = 160;
+    
+    // Scan for left edge
+    const leftEdges: number[] = [];
+    for (let sy = 0; sy < h; sy += Math.max(1, Math.floor(h / 60))) {
+      for (let x = 0; x < w * 0.4; x++) {
+        if (gray[sy * w + x] > brightThresh) { leftEdges.push(x); break; }
+      }
+    }
+    
+    // Scan for right edge
+    const rightEdges: number[] = [];
+    for (let sy = 0; sy < h; sy += Math.max(1, Math.floor(h / 60))) {
+      for (let x = w - 1; x > w * 0.6; x--) {
+        if (gray[sy * w + x] > brightThresh) { rightEdges.push(x); break; }
+      }
+    }
+    
+    // Scan for top edge
+    const topEdges: number[] = [];
+    for (let sx = 0; sx < w; sx += Math.max(1, Math.floor(w / 60))) {
+      for (let y = 0; y < h * 0.4; y++) {
+        if (gray[y * w + sx] > brightThresh) { topEdges.push(y); break; }
+      }
+    }
+    
+    // Scan for bottom edge
+    const bottomEdges: number[] = [];
+    for (let sx = 0; sx < w; sx += Math.max(1, Math.floor(w / 60))) {
+      for (let y = h - 1; y > h * 0.6; y--) {
+        if (gray[y * w + sx] > brightThresh) { bottomEdges.push(y); break; }
+      }
+    }
+    
+    // Use percentile values for robust edge detection
+    const percentile = (arr: number[], p: number) => {
+      if (arr.length === 0) return 0;
+      const sorted = [...arr].sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length * p)];
+    };
+    
+    const pLeft = leftEdges.length > 3 ? percentile(leftEdges, 0.3) : 0;
+    const pRight = rightEdges.length > 3 ? percentile(rightEdges, 0.7) : w - 1;
+    const pTop = topEdges.length > 3 ? percentile(topEdges, 0.3) : 0;
+    const pBottom = bottomEdges.length > 3 ? percentile(bottomEdges, 0.7) : h - 1;
+    
+    // 3. Refine corners using edge scanning at the paper boundary
+    //    Find actual corners where top/bottom edges meet left/right edges
+    const findCorner = (startX: number, startY: number, dirX: number, dirY: number): {x: number, y: number} => {
+      // Search in a neighborhood for the sharpest bright-to-dark transition
+      let bestX = startX, bestY = startY;
+      const searchR = Math.min(w, h) * 0.05;
+      let bestScore = -1;
+      
+      for (let dy = -searchR; dy <= searchR; dy += 3) {
+        for (let dx = -searchR; dx <= searchR; dx += 3) {
+          const cx = Math.round(startX + dx);
+          const cy = Math.round(startY + dy);
+          if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+          
+          // Check brightness gradient at this point
+          const px = Math.min(w - 1, Math.max(0, cx + dirX * 5));
+          const py = Math.min(h - 1, Math.max(0, cy + dirY * 5));
+          const inner = gray[cy * w + cx];
+          const outer = gray[py * w + px];
+          const score = inner - outer; // paper is brighter than background
+          if (score > bestScore) {
+            bestScore = score;
+            bestX = cx;
+            bestY = cy;
+          }
+        }
+      }
+      return { x: bestX, y: bestY };
+    };
+    
+    const tl = findCorner(pLeft, pTop, -1, -1);
+    const tr = findCorner(pRight, pTop, 1, -1);
+    const bl = findCorner(pLeft, pBottom, -1, 1);
+    const br = findCorner(pRight, pBottom, 1, 1);
+    
+    console.log(`[DocScan] Detected paper corners: TL=(${tl.x},${tl.y}) TR=(${tr.x},${tr.y}) BL=(${bl.x},${bl.y}) BR=(${br.x},${br.y})`);
+    
+    // 4. Compute output size based on A4 aspect ratio (210:297)
+    const paperW = Math.max(
+      Math.sqrt(Math.pow(tr.x - tl.x, 2) + Math.pow(tr.y - tl.y, 2)),
+      Math.sqrt(Math.pow(br.x - bl.x, 2) + Math.pow(br.y - bl.y, 2))
+    );
+    const paperH = Math.max(
+      Math.sqrt(Math.pow(bl.x - tl.x, 2) + Math.pow(bl.y - tl.y, 2)),
+      Math.sqrt(Math.pow(br.x - tr.x, 2) + Math.pow(br.y - tr.y, 2))
+    );
+    
+    // Use the detected dimensions but enforce minimum quality
+    const outW = Math.max(800, Math.round(paperW));
+    const outH = Math.max(1000, Math.round(paperH));
+    
+    // 5. Perspective warp using bilinear interpolation
+    //    Map each output pixel back to source coordinates
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = outW;
+    outCanvas.height = outH;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return srcCanvas;
+    
+    const outImgData = outCtx.createImageData(outW, outH);
+    const out = outImgData.data;
+    
+    for (let oy = 0; oy < outH; oy++) {
+      const ty = oy / outH; // 0..1 vertical
+      for (let ox = 0; ox < outW; ox++) {
+        const tx = ox / outW; // 0..1 horizontal
+        
+        // Bilinear interpolation of the 4 corners to find source position
+        const topX = tl.x + tx * (tr.x - tl.x);
+        const topY = tl.y + tx * (tr.y - tl.y);
+        const botX = bl.x + tx * (br.x - bl.x);
+        const botY = bl.y + tx * (br.y - bl.y);
+        
+        const sx = topX + ty * (botX - topX);
+        const sy = topY + ty * (botY - topY);
+        
+        // Sample source pixel (nearest neighbor for speed)
+        const ix = Math.round(sx);
+        const iy = Math.round(sy);
+        
+        const oi = (oy * outW + ox) * 4;
+        if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+          const si = (iy * w + ix) * 4;
+          out[oi] = src[si];
+          out[oi + 1] = src[si + 1];
+          out[oi + 2] = src[si + 2];
+          out[oi + 3] = 255;
+        } else {
+          out[oi] = out[oi + 1] = out[oi + 2] = 255;
+          out[oi + 3] = 255;
+        }
+      }
+    }
+    
+    outCtx.putImageData(outImgData, 0, 0);
+    
+    // 6. Adaptive brightness enhancement — makes the scan look clean
+    //    Brightens the paper to pure white while preserving dark marks
+    const enhData = outCtx.getImageData(0, 0, outW, outH);
+    const enh = enhData.data;
+    
+    // Compute local brightness in a grid for adaptive enhancement
+    const gridSize = 32;
+    const gridW = Math.ceil(outW / gridSize);
+    const gridH = Math.ceil(outH / gridSize);
+    const gridMax = new Float32Array(gridW * gridH);
+    
+    // Find the 90th percentile brightness in each grid cell
+    for (let gy = 0; gy < gridH; gy++) {
+      for (let gx = 0; gx < gridW; gx++) {
+        const samples: number[] = [];
+        const y1 = gy * gridSize, y2 = Math.min(outH, (gy + 1) * gridSize);
+        const x1 = gx * gridSize, x2 = Math.min(outW, (gx + 1) * gridSize);
+        for (let py = y1; py < y2; py += 4) {
+          for (let px = x1; px < x2; px += 4) {
+            const i = (py * outW + px) * 4;
+            samples.push(Math.max(enh[i], enh[i + 1], enh[i + 2]));
+          }
+        }
+        samples.sort((a, b) => a - b);
+        gridMax[gy * gridW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.9)] : 200;
+      }
+    }
+    
+    // Apply adaptive brightness: scale each pixel so the local paper white → 250
+    for (let py = 0; py < outH; py++) {
+      for (let px = 0; px < outW; px++) {
+        const gx = Math.min(gridW - 1, Math.floor(px / gridSize));
+        const gy = Math.min(gridH - 1, Math.floor(py / gridSize));
+        const localMax = Math.max(100, gridMax[gy * gridW + gx]);
+        const scale = 250 / localMax;
+        
+        const i = (py * outW + px) * 4;
+        enh[i] = Math.min(255, Math.round(enh[i] * scale));
+        enh[i + 1] = Math.min(255, Math.round(enh[i + 1] * scale));
+        enh[i + 2] = Math.min(255, Math.round(enh[i + 2] * scale));
+      }
+    }
+    
+    outCtx.putImageData(enhData, 0, 0);
+    
+    console.log(`[DocScan] Output: ${outW}x${outH} (from ${w}x${h})`);
+    return outCanvas;
+  };
+
   // Process the captured image using OMR
   const processImage = useCallback(async () => {
     if (!capturedImage || !exam) return;
@@ -283,7 +494,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         img.onload = resolve;
       });
       
-      // Use the processing canvas
+      // Use the processing canvas to load the raw image
       const canvas = processingCanvasRef.current;
       if (!canvas) throw new Error('Canvas not available');
       
@@ -294,8 +505,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
       
-      // Get image data for processing
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // Apply document scanner: perspective correction + brightness enhancement
+      console.log('[DocScan] Starting document scan...');
+      const scannedCanvas = documentScan(canvas);
+      
+      // Update the displayed image with the scanned version
+      setCapturedImage(scannedCanvas.toDataURL('image/png'));
+      
+      // Get image data from the scanned (perspective-corrected, enhanced) canvas
+      const scannedCtx = scannedCanvas.getContext('2d');
+      if (!scannedCtx) throw new Error('Scanned canvas context not available');
+      const imageData = scannedCtx.getImageData(0, 0, scannedCanvas.width, scannedCanvas.height);
+      
+      console.log(`[OMR] Processing scanned image: ${imageData.width}x${imageData.height}`);
       
       // Process the image to detect filled bubbles
       const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
@@ -711,94 +933,109 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
 
     // 100‑question full page  210 × 297 mm
-    // Marker centers: TL (3, 3)  BR (200, 213.5)  →  frame 197 × 210.5 mm
     //
-    // CALIBRATION: The firstBubbleNX values are empirically corrected.
-    // The PDF draws bubbles at bx + numW (numW=12mm from block left edge).
-    // The original NX values were computed from bx alone, causing a leftward
-    // shift of ~1 bubble spacing. Adding 5.0mm corrects this.
-    const fw = 197, fh = 210.5;
+    // PDF LAYOUT TRACE (with logo + exam code):
+    //   Top markers: rect(3,3,7,7) & rect(200,3,7,7) → centers at (6.5, 6.5) & (203.5, 6.5)
+    //   currentY = 12 → +logoSize(12)+4 = 28 → +examCode(5) = 33 → +Name/Date(5) = 38
+    //   idTopY = 38, +7 → 45 (ID boxes), +idBoxH(5)+3 = 53 → idBubbleY = 53
+    //   ID first bubble column: idStartX = 10(margin)+3(pad)+8(label) = 21
+    //   ID bottom = 53 + 10*4.8 + 2 = 103, +4 → gridStartY = 107
+    //   Grid row 0: by=107, header+4.5 → first bubble at 111.5
+    //   Grid row 1: by=107+56=163, header+4.5 → first bubble at 167.5
+    //   Row 1 last qY = 163 + 4.5 + 10*4.8 = 215.5
+    //   bmY = 215.5 + 3 = 218.5 → bottom marker centers at (6.5, 222) & (203.5, 222)
+    //
+    //   fw = 203.5 - 6.5 = 197  ✓
+    //   fh = 222 - 6.5 = 215.5
+    //
+    // All NY values are (pageY - 6.5) / fh
+    // All NX values are (pageX - 6.5) / fw
+    //
+    // CALIBRATION: firstBubbleNX uses empirical xCorrection because PDF draws
+    //   bubbles at bx + numW (numW=12mm), corrected with +5.0mm offset.
+    const fw = 197, fh = 215.5;
     const xCorrection = 5.0;  // mm – empirical shift to align with actual bubble centers
     return {
       id: {
         // idStartX=21 page mm → (21 - 6.5) = 14.5 mm from TL marker center
         firstColNX: 14.5 / fw,
-        // idBubbleY=48 page mm (with logo) → (48 - 6.5) = 41.5 mm from TL marker center
-        firstRowNY: 41.5 / fh,
+        // idBubbleY=53 page mm → (53 - 6.5) = 46.5 mm from TL marker center
+        firstRowNY: 46.5 / fh,
         colSpacingNX: 4.5 / fw,
         rowSpacingNY: 4.8 / fh,
       },
       answerBlocks: [
-        // Top row (beside ID section)
+        // Top row (beside ID section) — aligned to idBubbleY
+        // First bubble at 53 + 4.5(header) = 57.5 → NY = (57.5 - 6.5) / fh = 51
         {
           startQ: 41, endQ: 50,
           firstBubbleNX: (83.35 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
+          firstBubbleNY: 51 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 71, endQ: 80,
           firstBubbleNX: (148.85 + xCorrection) / fw,
-          firstBubbleNY: 45 / fh,
+          firstBubbleNY: 51 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
-        // Bottom grid – row 0
+        // Bottom grid – row 0: by=107, first bubble at 107+4.5=111.5 → NY = 105
         {
           startQ: 1, endQ: 10,
           firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNY: 105 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 21, endQ: 30,
           firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNY: 105 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 51, endQ: 60,
           firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNY: 105 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 81, endQ: 90,
           firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 99 / fh,
+          firstBubbleNY: 105 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
-        // Bottom grid – row 1
+        // Bottom grid – row 1: by=163, first bubble at 163+4.5=167.5 → NY = 161
         {
           startQ: 11, endQ: 20,
           firstBubbleNX: (20.36 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNY: 161 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 31, endQ: 40,
           firstBubbleNX: (64.52 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNY: 161 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 61, endQ: 70,
           firstBubbleNX: (108.68 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNY: 161 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
         {
           startQ: 91, endQ: 100,
           firstBubbleNX: (152.84 + xCorrection) / fw,
-          firstBubbleNY: 155 / fh,
+          firstBubbleNY: 161 / fh,
           bubbleSpacingNX: 5.0 / fw,
           rowSpacingNY: 4.8 / fh,
         },
@@ -1493,15 +1730,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-gray-900">Processing Answer Sheet</h3>
+              <h3 className="text-xl font-bold text-gray-900">Scanning Document</h3>
               <p className="text-gray-600 mt-2">
-                Detecting bubbles and reading answers...
+                Straightening paper, enhancing image, and reading bubbles...
               </p>
             </div>
-            <div className="max-w-xs mx-auto">
+            <div className="max-w-xs mx-auto space-y-2">
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div className="h-full bg-[#1a472a] rounded-full animate-pulse" style={{ width: '60%' }} />
               </div>
+              <p className="text-xs text-gray-400">Auto perspective correction • Contrast enhancement • OMR detection</p>
             </div>
           </div>
         </Card>
