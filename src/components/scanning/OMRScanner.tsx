@@ -192,16 +192,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const getGuideCropRegion = (videoWidth: number, videoHeight: number): { x: number; y: number; w: number; h: number } => {
     const t = getTemplateType();
     // These match the CSS guide overlay exactly
-    const guideWidthFraction = t === 20 ? 0.75 : t === 50 ? 0.55 : 0.70;
+    // 100-item uses a tighter frame (90%) to minimize background inclusion
+    const guideWidthFraction = t === 20 ? 0.75 : t === 50 ? 0.55 : 0.90;
     const paperAspect = t === 20 ? (105 / 148.5) : t === 50 ? (105 / 297) : (210 / 297); // width / height
 
-    // The video element is displayed as w-full h-auto, so display matches native aspect.
-    // The guide overlay is centered (flexbox) with a percentage of the display width and constrained by aspect ratio.
-    
-    // Guide display width = guideWidthFraction * displayWidth
-    // Guide display height = guideDisplayWidth / paperAspect
-    // But it can't exceed the display height, so clamp.
-    
     // In normalized coordinates (0-1 of video):
     let guideW = guideWidthFraction; // fraction of video width
     let guideH = (guideW * videoWidth) / (paperAspect * videoHeight); // fraction of video height
@@ -372,7 +366,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const findCornerMarkers = (
     binary: Uint8Array,
     width: number,
-    height: number
+    height: number,
+    grayscale?: Uint8Array
   ): {
     found: boolean;
     topLeft: { x: number; y: number };
@@ -380,56 +375,215 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     bottomLeft: { x: number; y: number };
     bottomRight: { x: number; y: number };
   } => {
-    const minDim = Math.min(width, height);
-    const markerSize = Math.max(12, Math.floor(minDim * 0.04));
-    const searchFraction = 0.30;
-
-    const findMarkerInRegion = (
-      rx1: number, ry1: number, rx2: number, ry2: number
-    ): { x: number; y: number; density: number } => {
-      let bestX = (rx1 + rx2) / 2;
-      let bestY = (ry1 + ry2) / 2;
-      let bestDensity = 0;
-      const step = Math.max(1, Math.floor(markerSize / 5));
-
-      for (let y = ry1; y <= ry2 - markerSize; y += step) {
-        for (let x = rx1; x <= rx2 - markerSize; x += step) {
-          let filled = 0;
-          let total = 0;
-          for (let dy = 0; dy < markerSize; dy += 2) {
-            for (let dx = 0; dx < markerSize; dx += 2) {
-              const px = Math.min(width - 1, x + dx);
-              const py = Math.min(height - 1, y + dy);
-              filled += binary[py * width + px];
-              total++;
-            }
-          }
-          const density = filled / total;
-          if (density > bestDensity) {
-            bestDensity = density;
-            bestX = x + markerSize / 2;
-            bestY = y + markerSize / 2;
+    // ── Step 1: Try to detect paper boundaries using grayscale ──
+    // This helps exclude background (table, shadows) from the marker search
+    let paperLeft = 0, paperRight = width, paperTop = 0, paperBottom = height;
+    
+    if (grayscale) {
+      // Scan horizontal lines to find paper edges (paper is bright, background is darker)
+      const sampleRows = 20;
+      const brightThreshold = 180; // pixels brighter than this are likely paper
+      
+      // Find left edge of paper
+      const leftEdges: number[] = [];
+      for (let si = 0; si < sampleRows; si++) {
+        const y = Math.floor(height * (0.2 + 0.6 * si / sampleRows));
+        for (let x = 0; x < width * 0.4; x++) {
+          if (grayscale[y * width + x] > brightThreshold) {
+            leftEdges.push(x);
+            break;
           }
         }
       }
-      return { x: bestX, y: bestY, density: bestDensity };
+      
+      // Find right edge of paper
+      const rightEdges: number[] = [];
+      for (let si = 0; si < sampleRows; si++) {
+        const y = Math.floor(height * (0.2 + 0.6 * si / sampleRows));
+        for (let x = width - 1; x > width * 0.6; x--) {
+          if (grayscale[y * width + x] > brightThreshold) {
+            rightEdges.push(x);
+            break;
+          }
+        }
+      }
+      
+      // Find top edge of paper
+      const topEdges: number[] = [];
+      const sampleCols = 20;
+      for (let si = 0; si < sampleCols; si++) {
+        const x = Math.floor(width * (0.2 + 0.6 * si / sampleCols));
+        for (let y = 0; y < height * 0.4; y++) {
+          if (grayscale[y * width + x] > brightThreshold) {
+            topEdges.push(y);
+            break;
+          }
+        }
+      }
+      
+      // Find bottom edge of paper
+      const bottomEdges: number[] = [];
+      for (let si = 0; si < sampleCols; si++) {
+        const x = Math.floor(width * (0.2 + 0.6 * si / sampleCols));
+        for (let y = height - 1; y > height * 0.6; y--) {
+          if (grayscale[y * width + x] > brightThreshold) {
+            bottomEdges.push(y);
+            break;
+          }
+        }
+      }
+      
+      // Use median edges (robust to outliers)
+      if (leftEdges.length > 3) {
+        leftEdges.sort((a, b) => a - b);
+        paperLeft = Math.max(0, leftEdges[Math.floor(leftEdges.length * 0.3)] - 5);
+      }
+      if (rightEdges.length > 3) {
+        rightEdges.sort((a, b) => a - b);
+        paperRight = Math.min(width, rightEdges[Math.floor(rightEdges.length * 0.7)] + 5);
+      }
+      if (topEdges.length > 3) {
+        topEdges.sort((a, b) => a - b);
+        paperTop = Math.max(0, topEdges[Math.floor(topEdges.length * 0.3)] - 5);
+      }
+      if (bottomEdges.length > 3) {
+        bottomEdges.sort((a, b) => a - b);
+        paperBottom = Math.min(height, bottomEdges[Math.floor(bottomEdges.length * 0.7)] + 5);
+      }
+      
+      console.log(`[OMR] Paper bounds: L=${paperLeft} R=${paperRight} T=${paperTop} B=${paperBottom} (image: ${width}x${height})`);
+    }
+    
+    const paperW = paperRight - paperLeft;
+    const paperH = paperBottom - paperTop;
+    const minDim = Math.min(paperW, paperH);
+    
+    // ── Step 2: Search for markers at multiple scales ──
+    // The markers are 7mm squares on the 100-item template, ~4mm on smaller ones
+    const baseMarkerSize = Math.max(10, Math.floor(minDim * 0.035));
+    const markerSizes = [
+      Math.floor(baseMarkerSize * 0.7),
+      baseMarkerSize,
+      Math.floor(baseMarkerSize * 1.3),
+      Math.floor(baseMarkerSize * 1.6),
+    ];
+    
+    // Search in the corners of the PAPER area, not the full image
+    const searchFraction = 0.25;
+
+    const findMarkerInRegion = (
+      rx1: number, ry1: number, rx2: number, ry2: number
+    ): { x: number; y: number; density: number; size: number } => {
+      let bestX = (rx1 + rx2) / 2;
+      let bestY = (ry1 + ry2) / 2;
+      let bestDensity = 0;
+      let bestSize = baseMarkerSize;
+      
+      for (const mSize of markerSizes) {
+        const step = Math.max(1, Math.floor(mSize / 4));
+
+        for (let y = ry1; y <= ry2 - mSize; y += step) {
+          for (let x = rx1; x <= rx2 - mSize; x += step) {
+            let filled = 0;
+            let total = 0;
+            for (let dy = 0; dy < mSize; dy += 2) {
+              for (let dx = 0; dx < mSize; dx += 2) {
+                const px = Math.min(width - 1, x + dx);
+                const py = Math.min(height - 1, y + dy);
+                filled += binary[py * width + px];
+                total++;
+              }
+            }
+            const density = filled / total;
+            if (density > bestDensity) {
+              // Additional check: verify surrounding area is NOT also dark
+              // (to reject table edges / shadows which are large dark areas)
+              if (grayscale) {
+                const cx = x + mSize / 2;
+                const cy = y + mSize / 2;
+                const checkDist = mSize * 1.5;
+                let surroundBright = 0, surroundCount = 0;
+                
+                // Check brightness in a ring around the candidate
+                for (const [ox, oy] of [
+                  [-checkDist, 0], [checkDist, 0], [0, -checkDist], [0, checkDist],
+                  [-checkDist, -checkDist], [checkDist, -checkDist],
+                  [-checkDist, checkDist], [checkDist, checkDist]
+                ]) {
+                  const sx = Math.round(cx + ox);
+                  const sy = Math.round(cy + oy);
+                  if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+                    surroundBright += grayscale[sy * width + sx];
+                    surroundCount++;
+                  }
+                }
+                
+                // A real marker has bright (paper) surroundings — mean > 150
+                // A shadow/table edge has dark surroundings — mean < 120
+                if (surroundCount > 0 && (surroundBright / surroundCount) < 120) {
+                  continue; // Skip — this is probably a shadow or table edge
+                }
+              }
+              
+              bestDensity = density;
+              bestX = x + mSize / 2;
+              bestY = y + mSize / 2;
+              bestSize = mSize;
+            }
+          }
+        }
+      }
+      return { x: bestX, y: bestY, density: bestDensity, size: bestSize };
     };
 
-    const cW = Math.floor(width * searchFraction);
-    const cH = Math.floor(height * searchFraction);
+    const cW = Math.floor(paperW * searchFraction);
+    const cH = Math.floor(paperH * searchFraction);
 
-    const tl = findMarkerInRegion(0, 0, cW, cH);
-    const tr = findMarkerInRegion(width - cW, 0, width, cH);
-    const bl = findMarkerInRegion(0, height - cH, cW, height);
-    const br = findMarkerInRegion(width - cW, height - cH, width, height);
+    const tl = findMarkerInRegion(paperLeft, paperTop, paperLeft + cW, paperTop + cH);
+    const tr = findMarkerInRegion(paperRight - cW, paperTop, paperRight, paperTop + cH);
+    const bl = findMarkerInRegion(paperLeft, paperBottom - cH, paperLeft + cW, paperBottom);
+    const br = findMarkerInRegion(paperRight - cW, paperBottom - cH, paperRight, paperBottom);
 
-    const minDensityThreshold = 0.4;
+    console.log(`[OMR] Marker densities: TL=${tl.density.toFixed(2)} TR=${tr.density.toFixed(2)} BL=${bl.density.toFixed(2)} BR=${br.density.toFixed(2)}`);
+    console.log(`[OMR] Marker positions: TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)})`);
+
+    // ── Step 3: Validate marker geometry ──
+    const minDensityThreshold = 0.45;
+    const densityOk = tl.density > minDensityThreshold && tr.density > minDensityThreshold &&
+                      bl.density > minDensityThreshold && br.density > minDensityThreshold;
+    
+    if (densityOk) {
+      // Check that the markers form a reasonable rectangle
+      const topWidth = Math.sqrt(Math.pow(tr.x - tl.x, 2) + Math.pow(tr.y - tl.y, 2));
+      const bottomWidth = Math.sqrt(Math.pow(br.x - bl.x, 2) + Math.pow(br.y - bl.y, 2));
+      const leftHeight = Math.sqrt(Math.pow(bl.x - tl.x, 2) + Math.pow(bl.y - tl.y, 2));
+      const rightHeight = Math.sqrt(Math.pow(br.x - tr.x, 2) + Math.pow(br.y - tr.y, 2));
+      
+      // Top and bottom widths should be within 15% of each other
+      const widthRatio = Math.min(topWidth, bottomWidth) / Math.max(topWidth, bottomWidth);
+      // Left and right heights should be within 15% of each other
+      const heightRatio = Math.min(leftHeight, rightHeight) / Math.max(leftHeight, rightHeight);
+      
+      // Aspect ratio check: for A4 paper (210x297), markers span roughly 197x210mm
+      // So width/height ≈ 0.94 for 100-item, ~0.85 for mini sheets
+      const markerAspect = (topWidth + bottomWidth) / (leftHeight + rightHeight);
+      
+      const geometryOk = widthRatio > 0.85 && heightRatio > 0.85 && markerAspect > 0.5 && markerAspect < 2.0;
+      
+      console.log(`[OMR] Geometry: topW=${topWidth.toFixed(0)} botW=${bottomWidth.toFixed(0)} leftH=${leftHeight.toFixed(0)} rightH=${rightHeight.toFixed(0)} aspect=${markerAspect.toFixed(2)} widthRatio=${widthRatio.toFixed(2)} heightRatio=${heightRatio.toFixed(2)} ok=${geometryOk}`);
+      
+      return {
+        found: geometryOk,
+        topLeft: { x: tl.x, y: tl.y },
+        topRight: { x: tr.x, y: tr.y },
+        bottomLeft: { x: bl.x, y: bl.y },
+        bottomRight: { x: br.x, y: br.y },
+      };
+    }
+    
+    console.log('[OMR] Marker density check failed, using fallback');
     return {
-      found:
-        tl.density > minDensityThreshold &&
-        tr.density > minDensityThreshold &&
-        bl.density > minDensityThreshold &&
-        br.density > minDensityThreshold,
+      found: false,
       topLeft: { x: tl.x, y: tl.y },
       topRight: { x: tr.x, y: tr.y },
       bottomLeft: { x: bl.x, y: bl.y },
@@ -663,12 +817,32 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const { data, width, height } = imageData;
 
     // 1. Convert to grayscale
-    const grayscale = new Uint8Array(width * height);
+    const rawGrayscale = new Uint8Array(width * height);
     for (let i = 0; i < data.length; i += 4) {
-      grayscale[i / 4] = Math.round(
+      rawGrayscale[i / 4] = Math.round(
         0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
       );
     }
+
+    // 1b. Contrast normalization — stretches the histogram to use the full 0-255 range
+    // This helps when the image has poor lighting (shadows, dim environment)
+    let gMin = 255, gMax = 0;
+    // Sample to find the 2nd and 98th percentile (robust to extreme outliers)
+    const sortSample: number[] = [];
+    const sampleStep = Math.max(1, Math.floor(rawGrayscale.length / 10000));
+    for (let i = 0; i < rawGrayscale.length; i += sampleStep) {
+      sortSample.push(rawGrayscale[i]);
+    }
+    sortSample.sort((a, b) => a - b);
+    gMin = sortSample[Math.floor(sortSample.length * 0.02)];
+    gMax = sortSample[Math.floor(sortSample.length * 0.98)];
+    const gRange = Math.max(1, gMax - gMin);
+
+    const grayscale = new Uint8Array(width * height);
+    for (let i = 0; i < rawGrayscale.length; i++) {
+      grayscale[i] = Math.max(0, Math.min(255, Math.round(((rawGrayscale[i] - gMin) / gRange) * 255)));
+    }
+    console.log(`[OMR] Contrast normalization: min=${gMin} max=${gMax} range=${gRange}`);
 
     // 2. Compute integral image for fast adaptive thresholding
     const integral = new Float64Array(width * height);
@@ -704,20 +878,23 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 4. Find corner alignment markers (still use binary for marker detection)
-    const markers = findCornerMarkers(binary, width, height);
+    // 4. Find corner alignment markers (use binary + grayscale for robust detection)
+    const markers = findCornerMarkers(binary, width, height, grayscale);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
 
-    // 5. Fallback: use image bounds with 2% margin
+    // 5. Fallback: use image bounds with margin appropriate to the template
+    // For 100-item, the paper fills most of the cropped image, so use tighter margins
+    const templateType = numQuestions <= 20 ? 20 : numQuestions <= 50 ? 50 : 100;
+    const fallbackMargin = templateType === 100 ? 0.04 : 0.02;
     const effectiveMarkers = markers.found
       ? markers
       : {
-          topLeft: { x: width * 0.02, y: height * 0.02 },
-          topRight: { x: width * 0.98, y: height * 0.02 },
-          bottomLeft: { x: width * 0.02, y: height * 0.98 },
-          bottomRight: { x: width * 0.98, y: height * 0.98 },
+          topLeft: { x: width * fallbackMargin, y: height * fallbackMargin },
+          topRight: { x: width * (1 - fallbackMargin), y: height * fallbackMargin },
+          bottomLeft: { x: width * fallbackMargin, y: height * (1 - fallbackMargin) },
+          bottomRight: { x: width * (1 - fallbackMargin), y: height * (1 - fallbackMargin) },
         };
 
     // 6. Get template layout for this exam's question count
@@ -766,10 +943,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusY: number
   ): number => {
     // Sample the inner area of the bubble (the part that gets filled in)
+    // Use inner 50% to safely avoid the printed circle outline
     let innerSum = 0, innerCount = 0;
-    const innerRX = radiusX * 0.55; // inner 55% — avoids the printed circle outline
-    const innerRY = radiusY * 0.55;
-    const step = Math.max(1, Math.floor(Math.min(innerRX, innerRY) / 5));
+    const innerRX = radiusX * 0.50;
+    const innerRY = radiusY * 0.50;
+    const step = Math.max(1, Math.floor(Math.min(innerRX, innerRY) / 4));
 
     for (let dy = -Math.floor(innerRY); dy <= Math.floor(innerRY); dy += step) {
       for (let dx = -Math.floor(innerRX); dx <= Math.floor(innerRX); dx += step) {
@@ -783,22 +961,33 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // Sample the surrounding area (paper between bubbles — should be white/light)
+    // Sample the surrounding paper area — use specific spots above and below the bubble
+    // to avoid accidentally sampling adjacent bubbles in the same row.
+    // On a 100-item template, horizontal spacing is tight (5mm between centers, 3.8mm diameter)
+    // so we sample primarily above/below where there's row gap space.
     let outerSum = 0, outerCount = 0;
-    const outerRX = radiusX * 2.0;
-    const outerRY = radiusY * 2.0;
-    const outerStep = Math.max(1, Math.floor(Math.min(outerRX, outerRY) / 6));
-
-    for (let dy = -Math.floor(outerRY); dy <= Math.floor(outerRY); dy += outerStep) {
-      for (let dx = -Math.floor(outerRX); dx <= Math.floor(outerRX); dx += outerStep) {
-        // Only sample the ring between 1.3r and 2.0r (outside the bubble, on paper)
-        const normDist = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
-        if (normDist < 1.7 || normDist > 4.0) continue;
-        const px = Math.round(cx + dx);
-        const py = Math.round(cy + dy);
-        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          outerSum += grayscale[py * imgW + px];
-          outerCount++;
+    
+    // Sample 4 spots: above, below, and two diagonal spots
+    const spotOffsets = [
+      { dx: 0, dy: -(radiusY * 1.6) },    // above
+      { dx: 0, dy: (radiusY * 1.6) },     // below
+      { dx: -(radiusX * 1.4), dy: -(radiusY * 1.0) }, // upper-left diagonal
+      { dx: (radiusX * 1.4), dy: -(radiusY * 1.0) },  // upper-right diagonal
+      { dx: -(radiusX * 1.4), dy: (radiusY * 1.0) },  // lower-left diagonal
+      { dx: (radiusX * 1.4), dy: (radiusY * 1.0) },   // lower-right diagonal
+    ];
+    
+    for (const spot of spotOffsets) {
+      // Sample a small patch around each spot
+      const spotR = Math.max(2, Math.floor(Math.min(radiusX, radiusY) * 0.3));
+      for (let dy = -spotR; dy <= spotR; dy += Math.max(1, spotR)) {
+        for (let dx = -spotR; dx <= spotR; dx += Math.max(1, spotR)) {
+          const px = Math.round(cx + spot.dx + dx);
+          const py = Math.round(cy + spot.dy + dy);
+          if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
+            outerSum += grayscale[py * imgW + px];
+            outerCount++;
+          }
         }
       }
     }
@@ -920,7 +1109,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // A second bubble must be at least 70% as dark as the darkest to count as double-shade
     const MULTI_ANSWER_RATIO = 0.70;
 
+    console.log(`[ANS] Frame: ${Math.round(frameW)}x${Math.round(frameH)}px, BubbleR: ${bubbleRX.toFixed(1)}x${bubbleRY.toFixed(1)}px`);
+
     for (const block of layout.answerBlocks) {
+      // Log the pixel position of the first bubble in each block for debugging
+      const firstNX = block.firstBubbleNX;
+      const firstNY = block.firstBubbleNY;
+      const firstPx = mapToPixel(markers, firstNX, firstNY);
+      console.log(`[ANS] Block Q${block.startQ}-${block.endQ}: firstBubble at nx=${firstNX.toFixed(4)} ny=${firstNY.toFixed(4)} → px=(${Math.round(firstPx.px)},${Math.round(firstPx.py)})`);
+
       for (let q = block.startQ; q <= block.endQ && q <= numQuestions; q++) {
         const qIndex = q - 1;
         const rowInBlock = q - block.startQ;
@@ -1226,10 +1423,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   ? { width: '75%', aspectRatio: '105 / 148.5' }   // landscape-ish small card
                   : t === 50
                   ? { width: '55%', aspectRatio: '105 / 297' }     // tall narrow
-                  : { width: '70%', aspectRatio: '210 / 297' };    // A4 portrait
+                  : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
                 const label = t === 20
                   ? 'Align answer sheet within the frame'
-                  : `Align ${t}-item sheet within the frame`;
+                  : t === 50
+                  ? `Align ${t}-item sheet within the frame`
+                  : 'Fill the frame with the paper — edges close to border';
                 return (
                   <div className="relative" style={guideStyle}>
                     <div className="absolute inset-0 border-2 border-white/60 rounded-lg" />
