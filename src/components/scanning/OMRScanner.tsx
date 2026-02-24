@@ -704,7 +704,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
     }
 
-    // 4. Find corner alignment markers
+    // 4. Find corner alignment markers (still use binary for marker detection)
     const markers = findCornerMarkers(binary, width, height);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
@@ -723,10 +723,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // 6. Get template layout for this exam's question count
     const layout = getTemplateLayout(numQuestions);
 
-    // 7. Detect student ID and answers
-    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(binary, width, height, effectiveMarkers, layout);
+    // 7. Detect student ID and answers using GRAYSCALE (not binary) for bubble sampling
+    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(grayscale, width, height, effectiveMarkers, layout);
     const { answers, multipleAnswers } = detectAnswersFromImage(
-      binary, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
+      grayscale, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
 
     return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns };
@@ -754,9 +754,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return threshold;
   };
 
-  // ─── BUBBLE SAMPLING ───
+  // ─── BUBBLE SAMPLING (grayscale-based) ───
+  // Returns a score where HIGHER = MORE FILLED (darker bubble relative to surroundings)
   const sampleBubbleAt = (
-    binary: Uint8Array,
+    grayscale: Uint8Array,
     imgW: number,
     imgH: number,
     cx: number,
@@ -764,28 +765,61 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusX: number,
     radiusY: number
   ): number => {
-    let filled = 0, total = 0;
-    const rx = radiusX * 0.75;
-    const ry = radiusY * 0.75;
-    const step = Math.max(1, Math.floor(Math.min(rx, ry) / 6));
+    // Sample the inner area of the bubble (the part that gets filled in)
+    let innerSum = 0, innerCount = 0;
+    const innerRX = radiusX * 0.55; // inner 55% — avoids the printed circle outline
+    const innerRY = radiusY * 0.55;
+    const step = Math.max(1, Math.floor(Math.min(innerRX, innerRY) / 5));
 
-    for (let dy = -Math.floor(ry); dy <= Math.floor(ry); dy += step) {
-      for (let dx = -Math.floor(rx); dx <= Math.floor(rx); dx += step) {
-        if (rx > 0 && ry > 0 && (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) > 1) continue;
+    for (let dy = -Math.floor(innerRY); dy <= Math.floor(innerRY); dy += step) {
+      for (let dx = -Math.floor(innerRX); dx <= Math.floor(innerRX); dx += step) {
+        if (innerRX > 0 && innerRY > 0 && (dx * dx) / (innerRX * innerRX) + (dy * dy) / (innerRY * innerRY) > 1) continue;
         const px = Math.round(cx + dx);
         const py = Math.round(cy + dy);
         if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          filled += binary[py * imgW + px];
-          total++;
+          innerSum += grayscale[py * imgW + px];
+          innerCount++;
         }
       }
     }
-    return total > 0 ? filled / total : 0;
+
+    // Sample the surrounding area (paper between bubbles — should be white/light)
+    let outerSum = 0, outerCount = 0;
+    const outerRX = radiusX * 2.0;
+    const outerRY = radiusY * 2.0;
+    const outerStep = Math.max(1, Math.floor(Math.min(outerRX, outerRY) / 6));
+
+    for (let dy = -Math.floor(outerRY); dy <= Math.floor(outerRY); dy += outerStep) {
+      for (let dx = -Math.floor(outerRX); dx <= Math.floor(outerRX); dx += outerStep) {
+        // Only sample the ring between 1.3r and 2.0r (outside the bubble, on paper)
+        const normDist = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
+        if (normDist < 1.7 || normDist > 4.0) continue;
+        const px = Math.round(cx + dx);
+        const py = Math.round(cy + dy);
+        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
+          outerSum += grayscale[py * imgW + px];
+          outerCount++;
+        }
+      }
+    }
+
+    if (innerCount === 0) return 0;
+
+    const innerMean = innerSum / innerCount;
+    const outerMean = outerCount > 0 ? outerSum / outerCount : 200; // assume light background
+
+    // Score = how much darker the inner area is compared to the surroundings
+    // A filled bubble (pencil mark) will be much darker than the paper around it
+    // An empty bubble outline will be only slightly darker
+    // Normalize: 0 = same brightness as surroundings, 1 = very dark relative to surroundings
+    if (outerMean <= 10) return 0; // avoid division issues in very dark images
+    const contrast = (outerMean - innerMean) / outerMean;
+    return Math.max(0, contrast);
   };
 
   // ─── DETECT STUDENT ID ───
   const detectStudentIdFromImage = (
-    binary: Uint8Array,
+    grayscale: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -811,10 +845,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     console.log('[ID] BubbleR:', idBubbleRX.toFixed(1), 'x', idBubbleRY.toFixed(1));
 
-    const ID_FILL_THRESHOLD = 0.25;
-    const ID_DOUBLE_SHADE_RATIO = 0.55; // If 2nd highest fill >= 55% of max, it's a double shade
+    // Grayscale contrast thresholds
+    const ID_FILL_THRESHOLD = 0.15;
+    const ID_DOUBLE_SHADE_RATIO = 0.65;
 
-    for (let col = 0; col < 9; col++) {
+    for (let col = 0; col < 10; col++) {
       let maxFill = 0;
       let detectedDigit = 0;
       let hasDetection = false;
@@ -825,7 +860,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const ny = id.firstRowNY + row * id.rowSpacingNY;
         const { px, py } = mapToPixel(markers, nx, ny);
 
-        const fill = sampleBubbleAt(binary, width, height, px, py, idBubbleRX, idBubbleRY);
+        const fill = sampleBubbleAt(grayscale, width, height, px, py, idBubbleRX, idBubbleRY);
         fills.push(fill);
         if (fill > maxFill && fill > ID_FILL_THRESHOLD) {
           maxFill = fill;
@@ -834,18 +869,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
 
-      // Check for double-shade: count how many bubbles are significantly filled
+      // Check for double-shade
       if (maxFill > ID_FILL_THRESHOLD) {
         const filledCount = fills.filter(
           f => f > ID_FILL_THRESHOLD && f >= maxFill * ID_DOUBLE_SHADE_RATIO
         ).length;
         if (filledCount > 1) {
-          doubleShadeColumns.push(col + 1); // 1-based column number
+          doubleShadeColumns.push(col + 1);
           console.log(`[ID] ⚠️ Col ${col} has DOUBLE SHADE (${filledCount} bubbles filled)`);
         }
       }
 
-      console.log(`[ID] Col ${col}: fills=[${fills.map(f => f.toFixed(2)).join(',')}] → ${hasDetection ? detectedDigit : '?'} (max=${maxFill.toFixed(2)})`);
+      console.log(`[ID] Col ${col}: fills=[${fills.map(f => f.toFixed(3)).join(',')}] → ${hasDetection ? detectedDigit : '?'} (max=${maxFill.toFixed(3)})`);
       idDigits.push(hasDetection ? detectedDigit : 0);
     }
 
@@ -856,7 +891,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
   // ─── DETECT ANSWERS ───
   const detectAnswersFromImage = (
-    binary: Uint8Array,
+    grayscale: Uint8Array,
     width: number,
     height: number,
     markers: {
@@ -878,10 +913,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const bubbleRX = (layout.bubbleDiameterNX * frameW) / 2;
     const bubbleRY = (layout.bubbleDiameterNY * frameH) / 2;
 
-    // Threshold for considering a bubble as "filled"
-    const FILL_THRESHOLD = 0.20;
-    // If a second bubble has fill >= this ratio of the max, it's considered a multiple answer
-    const MULTI_ANSWER_RATIO = 0.45;
+    // Grayscale contrast thresholds
+    // A filled pencil bubble has contrast ~0.25–0.60
+    // An empty bubble (printed outline only) has contrast ~0.02–0.10
+    const FILL_THRESHOLD = 0.15;
+    // A second bubble must be at least 70% as dark as the darkest to count as double-shade
+    const MULTI_ANSWER_RATIO = 0.70;
 
     for (const block of layout.answerBlocks) {
       for (let q = block.startQ; q <= block.endQ && q <= numQuestions; q++) {
@@ -897,7 +934,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const ny = block.firstBubbleNY + rowInBlock * block.rowSpacingNY;
           const { px, py } = mapToPixel(markers, nx, ny);
 
-          const fill = sampleBubbleAt(binary, width, height, px, py, bubbleRX, bubbleRY);
+          const fill = sampleBubbleAt(grayscale, width, height, px, py, bubbleRX, bubbleRY);
           fills.push({ choice: choiceLabels[c], fill });
           if (fill > maxFill && fill > FILL_THRESHOLD) {
             maxFill = fill;
@@ -905,15 +942,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           }
         }
 
-        // Check if multiple bubbles are filled for this question
-        if (maxFill > FILL_THRESHOLD) {
-          const filledBubbles = fills.filter(
-            f => f.fill > FILL_THRESHOLD && f.fill >= maxFill * MULTI_ANSWER_RATIO
-          );
-          if (filledBubbles.length > 1) {
-            multipleAnswers.push(q); // Store 1-based question number
-            console.log(`[MULTI] Q${q}: ${filledBubbles.map(f => `${f.choice}=${f.fill.toFixed(2)}`).join(', ')} | all: ${fills.map(f => `${f.choice}=${f.fill.toFixed(2)}`).join(', ')}`);
+        // Additional check: the winner must stand out clearly from the rest
+        // Sort fills descending to compare 1st vs 2nd
+        const sortedFills = [...fills].sort((a, b) => b.fill - a.fill);
+        if (maxFill > FILL_THRESHOLD && sortedFills.length >= 2) {
+          const secondFill = sortedFills[1].fill;
+          // If second-highest is very close to max, flag as multiple answer
+          if (secondFill > FILL_THRESHOLD && secondFill >= maxFill * MULTI_ANSWER_RATIO) {
+            multipleAnswers.push(q);
+            console.log(`[MULTI] Q${q}: ${sortedFills.slice(0, 3).map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')}`);
           }
+        }
+
+        // Log first few questions for debugging
+        if (q <= 5 || (q % 10 === 1)) {
+          console.log(`[ANS] Q${q}: ${fills.map(f => `${f.choice}=${f.fill.toFixed(3)}`).join(', ')} → ${selectedChoice || '?'}`);
         }
 
         answers[qIndex] = selectedChoice;
