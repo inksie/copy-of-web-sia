@@ -137,44 +137,23 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
   }, [stream]);
 
-  // Get camera resolution based on template size
-  const getCameraConstraints = (): MediaTrackConstraints => {
+  // Get the template type from question count
+  const getTemplateType = (): 20 | 50 | 100 => {
     const numQ = exam?.num_items || 20;
-    if (numQ <= 20) {
-      // 20-item mini sheet (105×148.5mm) – landscape-ish, standard HD is fine
-      return {
-        facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      };
-    }
-    if (numQ <= 50) {
-      // 50-item tall sheet (105×297mm) – portrait orientation, need height
-      return {
-        facingMode: 'environment',
-        width: { ideal: 1536 },
-        height: { ideal: 2048 },
-      };
-    }
-    // 100-item full page (210×297mm) – portrait, need maximum resolution for dense bubbles
-    return {
-      facingMode: 'environment',
-      width: { ideal: 2048 },
-      height: { ideal: 2732 },
-    };
-  };
-
-  // Get the camera view aspect ratio based on template size
-  const getCameraAspectClass = (): string => {
-    const numQ = exam?.num_items || 20;
-    if (numQ <= 20) return 'aspect-[4/3]';     // landscape for mini sheet
-    return 'aspect-[3/4]';                       // portrait for 50 & 100 item sheets
+    return numQ <= 20 ? 20 : numQ <= 50 ? 50 : 100;
   };
 
   // Start camera
   const startCamera = async () => {
     try {
-      const constraints = getCameraConstraints();
+      const templateType = getTemplateType();
+      // Use higher resolution for larger templates with more dense bubbles
+      const constraints: MediaTrackConstraints = templateType === 20
+        ? { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+        : templateType === 50
+        ? { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+        : { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } };
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: constraints
       });
@@ -1133,26 +1112,50 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       {/* Mode: Camera */}
       {mode === 'camera' && (
         <Card className="overflow-hidden">
-          <div className={`relative bg-black ${getCameraAspectClass()}`}>
+          {/* 
+            Camera container: always use the native video stream aspect ratio.
+            The guide overlay inside adapts its shape to match the paper template.
+          */}
+          <div className="relative bg-black">
             <video
               ref={videoRef}
               autoPlay
               playsInline
-              className="w-full h-full object-cover"
+              className="w-full h-auto block"
             />
-            {/* Camera overlay guide */}
-            <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute inset-8 border-2 border-white/50 rounded-lg">
-                <div className="absolute top-2 left-2 w-8 h-8 border-t-2 border-l-2 border-white" />
-                <div className="absolute top-2 right-2 w-8 h-8 border-t-2 border-r-2 border-white" />
-                <div className="absolute bottom-2 left-2 w-8 h-8 border-b-2 border-l-2 border-white" />
-                <div className="absolute bottom-2 right-2 w-8 h-8 border-b-2 border-r-2 border-white" />
-              </div>
-              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-sm bg-black/50 px-4 py-2 rounded-full">
-                {(exam?.num_items || 20) <= 20
+            {/* Camera overlay guide — adapts to template */}
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              {/* Semi-transparent overlay around the guide */}
+              {(() => {
+                const t = getTemplateType();
+                // Paper aspect ratios (width:height)
+                // 20-item: 105 x 148.5mm  → ~0.707
+                // 50-item: 105 x 297mm    → ~0.354
+                // 100-item: 210 x 297mm   → ~0.707
+                // Guide occupies most of the view, with padding
+                const guideStyle = t === 20
+                  ? { width: '75%', aspectRatio: '105 / 148.5' }   // landscape-ish small card
+                  : t === 50
+                  ? { width: '55%', aspectRatio: '105 / 297' }     // tall narrow
+                  : { width: '70%', aspectRatio: '210 / 297' };    // A4 portrait
+                const label = t === 20
                   ? 'Align answer sheet within the frame'
-                  : 'Hold phone in PORTRAIT mode • Align sheet within the frame'}
-              </p>
+                  : `Align ${t}-item sheet within the frame`;
+                return (
+                  <div className="relative" style={guideStyle}>
+                    <div className="absolute inset-0 border-2 border-white/60 rounded-lg" />
+                    {/* Corner brackets */}
+                    <div className="absolute top-1 left-1 w-6 h-6 border-t-2 border-l-2 border-white rounded-tl" />
+                    <div className="absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 border-white rounded-tr" />
+                    <div className="absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 border-white rounded-bl" />
+                    <div className="absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 border-white rounded-br" />
+                    {/* Label */}
+                    <p className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-white text-xs bg-black/60 px-3 py-1.5 rounded-full">
+                      {label}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div className="p-4 flex justify-center gap-4">
