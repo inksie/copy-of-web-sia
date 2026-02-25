@@ -390,7 +390,59 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log(`[OMR] Processing enhanced image: ${imageData.width}x${imageData.height}`);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades, debugMarkers } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      
+      // Draw debug overlay showing detected marker positions and sample points
+      if (debugMarkers) {
+        const debugCanvas = document.createElement('canvas');
+        debugCanvas.width = enhancedCanvas.width;
+        debugCanvas.height = enhancedCanvas.height;
+        const dCtx = debugCanvas.getContext('2d');
+        if (dCtx) {
+          dCtx.drawImage(enhancedCanvas, 0, 0);
+          
+          // Draw marker positions as large red circles
+          const markerPoints = [
+            { label: 'TL', ...debugMarkers.topLeft },
+            { label: 'TR', ...debugMarkers.topRight },
+            { label: 'BL', ...debugMarkers.bottomLeft },
+            { label: 'BR', ...debugMarkers.bottomRight },
+          ];
+          for (const mp of markerPoints) {
+            dCtx.strokeStyle = '#FF0000';
+            dCtx.lineWidth = 3;
+            dCtx.beginPath();
+            dCtx.arc(mp.x, mp.y, 15, 0, Math.PI * 2);
+            dCtx.stroke();
+            // Cross
+            dCtx.beginPath();
+            dCtx.moveTo(mp.x - 20, mp.y);
+            dCtx.lineTo(mp.x + 20, mp.y);
+            dCtx.moveTo(mp.x, mp.y - 20);
+            dCtx.lineTo(mp.x, mp.y + 20);
+            dCtx.stroke();
+            // Label
+            dCtx.fillStyle = '#FF0000';
+            dCtx.font = 'bold 16px sans-serif';
+            dCtx.fillText(mp.label, mp.x + 18, mp.y - 10);
+          }
+          
+          // Draw connecting lines between markers (green)
+          dCtx.strokeStyle = '#00FF00';
+          dCtx.lineWidth = 1;
+          dCtx.setLineDash([8, 4]);
+          dCtx.beginPath();
+          dCtx.moveTo(debugMarkers.topLeft.x, debugMarkers.topLeft.y);
+          dCtx.lineTo(debugMarkers.topRight.x, debugMarkers.topRight.y);
+          dCtx.lineTo(debugMarkers.bottomRight.x, debugMarkers.bottomRight.y);
+          dCtx.lineTo(debugMarkers.bottomLeft.x, debugMarkers.bottomLeft.y);
+          dCtx.closePath();
+          dCtx.stroke();
+          dCtx.setLineDash([]);
+          
+          setCapturedImage(debugCanvas.toDataURL('image/png'));
+        }
+      }
       
       setDetectedStudentId(studentId);
       setDetectedAnswers(answers);
@@ -456,7 +508,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
   // ─── CORNER MARKER DETECTION ───
   // Finds the 4 black alignment squares on the answer sheet.
-  // Uses grayscale directly — looks for small dark squares with bright surroundings.
+  // Strategy: find ALL dark-square candidates in each corner region,
+  // then pick the one CLOSEST TO THE CORNER of the image.
+  // This is key because the real markers are always the outermost dark squares,
+  // while indicator squares (■ next to question block headers) are further inward.
   const findCornerMarkers = (
     _binary: Uint8Array,
     width: number,
@@ -481,32 +536,28 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     const minDim = Math.min(width, height);
     
-    // Marker sizes to search — the printed squares are 4mm (20/50-item) or 7mm (100-item)
-    // At typical resolution (1920×1080 capturing a ~210mm sheet) this is roughly 1.5–6% of image min dim
-    // We need a wide range to handle different template sizes and camera distances
+    // Marker sizes to search — 4mm (20/50-item) or 7mm (100-item)
+    // At typical resolution this is roughly 1.5–5% of image min dimension
     const baseSize = Math.max(8, Math.floor(minDim * 0.03));
     const sizes = [
-      Math.max(6, Math.floor(baseSize * 0.4)),
-      Math.max(8, Math.floor(baseSize * 0.6)),
-      Math.floor(baseSize * 0.8),
+      Math.max(6, Math.floor(baseSize * 0.5)),
+      Math.max(8, Math.floor(baseSize * 0.7)),
       baseSize,
       Math.floor(baseSize * 1.3),
-      Math.floor(baseSize * 1.6),
-      Math.floor(baseSize * 2.0),
-      Math.floor(baseSize * 2.5),
+      Math.floor(baseSize * 1.7),
+      Math.floor(baseSize * 2.2),
     ];
     
-    // Search region: generous corner regions to handle skew/tilt
+    // Search region: generous corner regions
     const searchW = Math.floor(width * 0.35);
     const searchH = Math.floor(height * 0.35);
     
-    // Score a candidate marker: dark interior + bright border = high score
-    // Uses MULTIPLE criteria to reject false positives (shadows, text, table edges)
+    // Score a candidate marker: dark interior + bright border + uniform + square-shaped
     const scoreMarker = (cx: number, cy: number, size: number): number => {
       const half = Math.floor(size / 2);
       if (half < 3) return 0;
       
-      // 1. Sample interior darkness (inner 60% of the square)
+      // 1. Sample interior darkness (inner 60%)
       const innerHalf = Math.floor(half * 0.6);
       let innerSum = 0, innerCount = 0;
       const step = Math.max(1, Math.floor(innerHalf / 4));
@@ -521,20 +572,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
       if (innerCount === 0) return 0;
       const innerMean = innerSum / innerCount;
-      
-      // Interior must be dark (< 120 on 0-255 scale after contrast normalization)
       if (innerMean > 120) return 0;
       
-      // 2. Sample border brightness — a ring at 1.2–1.8× the square radius
-      //    A real marker on paper will have bright white around it
-      //    Sample at 16 angles, but also sample at 4 cardinal directions at 2.5× for extra confidence
+      // 2. Border brightness ring (1.3–2.0× radius)
       let borderSum = 0, borderCount = 0;
-      const innerR = half * 1.2;
-      const outerR = half * 1.8;
-      
       for (let a = 0; a < 16; a++) {
         const angle = (a / 16) * Math.PI * 2;
-        for (let r = innerR; r <= outerR; r += Math.max(1, half * 0.25)) {
+        for (let r = half * 1.3; r <= half * 2.0; r += Math.max(1, half * 0.3)) {
           const px = Math.round(cx + Math.cos(angle) * r);
           const py = Math.round(cy + Math.sin(angle) * r);
           if (px >= 0 && px < width && py >= 0 && py < height) {
@@ -545,12 +589,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       }
       if (borderCount < 8) return 0;
       const borderMean = borderSum / borderCount;
-      
-      // Border must be significantly brighter than interior
       const contrast = borderMean - innerMean;
       if (contrast < 50) return 0;
       
-      // 3. Check that the interior is uniformly dark (low std deviation)
+      // 3. Uniformity check
       let innerVarSum = 0;
       for (let dy = -innerHalf; dy <= innerHalf; dy += step) {
         for (let dx = -innerHalf; dx <= innerHalf; dx += step) {
@@ -562,50 +604,30 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
       const innerStd = Math.sqrt(innerVarSum / innerCount);
-      
-      // 4. Check "squareness" — sample 4 edges of the square to confirm they are dark
-      // A marker should be dark along horizontal and vertical edges
-      let edgeDarkCount = 0, edgeTotalCount = 0;
-      const edgeHalf = Math.floor(half * 0.85);
-      // Top and bottom edges
-      for (const edgeDY of [-edgeHalf, edgeHalf]) {
-        for (let dx = -edgeHalf; dx <= edgeHalf; dx += step) {
-          const px = cx + dx, py = cy + edgeDY;
-          if (px >= 0 && px < width && py >= 0 && py < height) {
-            edgeTotalCount++;
-            if (grayscale[py * width + px] < innerMean + 40) edgeDarkCount++;
-          }
-        }
-      }
-      // Left and right edges
-      for (const edgeDX of [-edgeHalf, edgeHalf]) {
-        for (let dy = -edgeHalf; dy <= edgeHalf; dy += step) {
-          const px = cx + edgeDX, py = cy + dy;
-          if (px >= 0 && px < width && py >= 0 && py < height) {
-            edgeTotalCount++;
-            if (grayscale[py * width + px] < innerMean + 40) edgeDarkCount++;
-          }
-        }
-      }
-      const edgeRatio = edgeTotalCount > 0 ? edgeDarkCount / edgeTotalCount : 0;
-      // At least 70% of edges should be dark (a real square has all 4 sides dark)
-      if (edgeRatio < 0.65) return 0;
-      
-      // Penalize high variance — solid squares have std < 30
       const uniformityBonus = Math.max(0, 1 - innerStd / 50);
       
-      // Final score: contrast × uniformity × edge completeness
-      return contrast * uniformityBonus * edgeRatio;
+      return contrast * uniformityBonus;
     };
     
-    // Search each corner region for the best marker
-    const findBestMarker = (rx1: number, ry1: number, rx2: number, ry2: number) => {
-      let bestX = (rx1 + rx2) / 2;
-      let bestY = (ry1 + ry2) / 2;
-      let bestScore = 0;
-      let bestSize = baseSize;
+    // Find the best marker in a corner region.
+    // Strategy: find ALL candidates above threshold, then pick the one
+    // CLOSEST to the specified corner (cornerX, cornerY).
+    // This ensures we find the actual alignment marker, not an interior indicator square.
+    const findCornerMarker = (
+      rx1: number, ry1: number, rx2: number, ry2: number,
+      cornerX: number, cornerY: number
+    ) => {
+      interface Candidate {
+        x: number;
+        y: number;
+        score: number;
+        size: number;
+        distToCorner: number;
+      }
+      const candidates: Candidate[] = [];
+      const minQuality = 30;
       
-      // Coarse search: scan at larger steps
+      // Coarse scan to find all candidates
       for (const size of sizes) {
         const step = Math.max(3, Math.floor(size / 2));
         const half = Math.floor(size / 2);
@@ -613,56 +635,77 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         for (let y = ry1 + half; y <= ry2 - half; y += step) {
           for (let x = rx1 + half; x <= rx2 - half; x += step) {
             const score = scoreMarker(x, y, size);
-            if (score > bestScore) {
-              bestScore = score;
+            if (score > minQuality) {
+              const dist = Math.sqrt(Math.pow(x - cornerX, 2) + Math.pow(y - cornerY, 2));
+              candidates.push({ x, y, score, size, distToCorner: dist });
+            }
+          }
+        }
+      }
+      
+      if (candidates.length === 0) {
+        return { x: (rx1 + rx2) / 2, y: (ry1 + ry2) / 2, score: 0 };
+      }
+      
+      // Sort by distance to corner (closest first)
+      candidates.sort((a, b) => a.distToCorner - b.distToCorner);
+      
+      // The real marker should be among the closest candidates.
+      // Pick the closest candidate that has a reasonable score.
+      // We require at least 40% of the best score found — this filters out
+      // very weak false positives near the edge while keeping the real marker.
+      const bestScore = Math.max(...candidates.map(c => c.score));
+      const qualityThreshold = bestScore * 0.3;
+      
+      let chosen = candidates[0]; // default: closest
+      for (const c of candidates) {
+        if (c.score >= qualityThreshold) {
+          chosen = c;
+          break; // take the first (closest) candidate that meets quality threshold
+        }
+      }
+      
+      // Pixel-level refinement around chosen candidate
+      let bestX = chosen.x, bestY = chosen.y, bestS = chosen.score;
+      const refineR = Math.max(6, Math.floor(chosen.size / 2));
+      const refineSizes = [
+        Math.floor(chosen.size * 0.85),
+        Math.floor(chosen.size * 0.93),
+        chosen.size,
+        Math.floor(chosen.size * 1.07),
+        Math.floor(chosen.size * 1.15),
+      ];
+      
+      for (const size of refineSizes) {
+        for (let y = chosen.y - refineR; y <= chosen.y + refineR; y++) {
+          for (let x = chosen.x - refineR; x <= chosen.x + refineR; x++) {
+            if (x < 0 || x >= width || y < 0 || y >= height) continue;
+            const score = scoreMarker(x, y, size);
+            if (score > bestS) {
+              bestS = score;
               bestX = x;
               bestY = y;
-              bestSize = size;
             }
           }
         }
       }
       
-      // Multi-pass refinement: progressively tighter search around best candidate
-      if (bestScore > 0) {
-        // Pass 1: medium range, test nearby sizes too
-        for (let pass = 0; pass < 3; pass++) {
-          const refineR = pass === 0 ? Math.max(10, bestSize) : Math.max(4, Math.floor(bestSize / 3));
-          const candidateX = bestX, candidateY = bestY;
-          const sizesToTry = pass === 0
-            ? sizes
-            : [Math.floor(bestSize * 0.9), bestSize, Math.floor(bestSize * 1.1)];
-          
-          for (const size of sizesToTry) {
-            for (let y = candidateY - refineR; y <= candidateY + refineR; y += 1) {
-              for (let x = candidateX - refineR; x <= candidateX + refineR; x += 1) {
-                if (x < 0 || x >= width || y < 0 || y >= height) continue;
-                const score = scoreMarker(x, y, size);
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestX = x;
-                  bestY = y;
-                  bestSize = size;
-                }
-              }
-            }
-          }
-        }
-      }
+      console.log(`[OMR] Corner (${Math.round(cornerX)},${Math.round(cornerY)}): found ${candidates.length} candidates, chose (${Math.round(bestX)},${Math.round(bestY)}) score=${bestS.toFixed(0)} dist=${Math.sqrt(Math.pow(bestX - cornerX, 2) + Math.pow(bestY - cornerY, 2)).toFixed(0)}`);
       
-      return { x: bestX, y: bestY, score: bestScore };
+      return { x: bestX, y: bestY, score: bestS };
     };
     
-    const tl = findBestMarker(0, 0, searchW, searchH);
-    const tr = findBestMarker(width - searchW, 0, width, searchH);
-    const bl = findBestMarker(0, height - searchH, searchW, height);
-    const br = findBestMarker(width - searchW, height - searchH, width, height);
+    // Find marker closest to each image corner
+    const tl = findCornerMarker(0, 0, searchW, searchH, 0, 0);
+    const tr = findCornerMarker(width - searchW, 0, width, searchH, width, 0);
+    const bl = findCornerMarker(0, height - searchH, searchW, height, 0, height);
+    const br = findCornerMarker(width - searchW, height - searchH, width, height, width, height);
     
     console.log(`[OMR] Marker scores: TL=${tl.score.toFixed(0)} TR=${tr.score.toFixed(0)} BL=${bl.score.toFixed(0)} BR=${br.score.toFixed(0)}`);
     console.log(`[OMR] Marker positions: TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)})`);
     
     // All 4 markers must have a minimum quality score
-    const minScore = 40;
+    const minScore = 20;
     const allFound = tl.score >= minScore && tr.score >= minScore && bl.score >= minScore && br.score >= minScore;
     
     if (allFound) {
@@ -958,7 +1001,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     imageData: ImageData,
     numQuestions: number,
     choicesPerQuestion: number
-  ): Promise<{ studentId: string; answers: string[]; multipleAnswers: number[]; idDoubleShades: number[] }> => {
+  ): Promise<{
+    studentId: string;
+    answers: string[];
+    multipleAnswers: number[];
+    idDoubleShades: number[];
+    debugMarkers?: {
+      topLeft: { x: number; y: number };
+      topRight: { x: number; y: number };
+      bottomLeft: { x: number; y: number };
+      bottomRight: { x: number; y: number };
+    };
+  }> => {
     const { data, width, height } = imageData;
 
     // 1. Convert to grayscale
@@ -1015,7 +1069,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       grayscale, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
 
-    return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns };
+    return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns, debugMarkers: effectiveMarkers };
   };
 
   // ─── BUBBLE SAMPLING (grayscale-based) ───
