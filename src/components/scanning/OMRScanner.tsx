@@ -575,15 +575,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // ─── CORNER MARKER DETECTION ───
   // Finds the 4 black alignment squares printed at the corners of every answer sheet.
   //
-  // CHALLENGE for 100-item template: there are ~12 small indicator squares (■ 2.5mm)
-  // at each question block header. The real markers are 7mm (100-item) or 4mm (20/50-item).
+  // CHALLENGE: The paper may not fill the entire image — there can be dark desk/background
+  // around the paper edges. The detector must find markers ON THE PAPER, not at image edges.
   //
   // STRATEGY:
-  //   1. Estimate expected marker size in pixels based on image dimensions and template
-  //   2. Only search at sizes near the expected marker size (reject too-small candidates)
-  //   3. Use INTEGRAL IMAGE for fast dark-region scanning
-  //   4. For each corner: find the darkest region of the expected size → that's the marker
-  //   5. Refine with sub-pixel accuracy
+  //   1. Scan the ENTIRE image for dark, uniform, square-shaped regions
+  //   2. Require bright PAPER background around each candidate (rejects desk edges/shadows)
+  //   3. Collect ALL good candidates across the whole image
+  //   4. Pick the 4 candidates that form the best axis-aligned rectangle
+  //      (top-left-most, top-right-most, bottom-left-most, bottom-right-most)
   const findCornerMarkers = (
     _binary: Uint8Array,
     width: number,
@@ -618,9 +618,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     // Fast average brightness of a rectangle using integral image
     const rectAvg = (x1: number, y1: number, x2: number, y2: number): number => {
-      // Clamp to image bounds
-      x1 = Math.max(0, x1); y1 = Math.max(0, y1);
-      x2 = Math.min(width, x2); y2 = Math.min(height, y2);
+      x1 = Math.max(0, Math.floor(x1));
+      y1 = Math.max(0, Math.floor(y1));
+      x2 = Math.min(width, Math.floor(x2));
+      y2 = Math.min(height, Math.floor(y2));
       const area = (x2 - x1) * (y2 - y1);
       if (area <= 0) return 255;
       const sum = integral[y2 * (width + 1) + x2] - integral[y1 * (width + 1) + x2]
@@ -628,249 +629,259 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       return sum / area;
     };
 
-    // Estimate marker size in pixels.
-    // The paper fills most of the captured image (it's cropped to the guide frame).
-    // For 100-item: marker = 7mm on 210mm wide paper → ~3.3% of paper width
-    // For 20/50-item: marker = 4mm on 105mm wide paper → ~3.8% of paper width
-    // So roughly 3-4% of image width is the marker size.
-    // Try a range of sizes around that estimate.
-    const estSize = Math.round(width * 0.033);
+    // Estimate marker size based on image width.
+    // Paper may not fill the entire image, so use a conservative estimate.
+    // Real marker is 7mm on a 210mm page → 3.3% of page width.
+    // If the paper fills 50-90% of the image, marker is 1.7-3% of image width.
+    // Try sizes from ~1.5% to ~4% of image width.
+    const baseSize = Math.round(width * 0.025); // ~2.5% of image width
     const sizes = [
-      Math.max(8, Math.round(estSize * 0.6)),
-      Math.max(10, Math.round(estSize * 0.8)),
-      Math.max(12, estSize),
-      Math.round(estSize * 1.3),
-      Math.round(estSize * 1.6),
-      Math.round(estSize * 2.0),
+      Math.max(8, Math.round(baseSize * 0.5)),
+      Math.max(10, Math.round(baseSize * 0.7)),
+      Math.max(12, baseSize),
+      Math.round(baseSize * 1.3),
+      Math.round(baseSize * 1.6),
+      Math.round(baseSize * 2.0),
     ];
 
-    console.log(`[OMR] Marker search: image=${width}x${height}, estSize=${estSize}px, sizes=[${sizes.join(',')}]`);
+    console.log(`[OMR] Marker search: image=${width}x${height}, baseSize=${baseSize}px, sizes=[${sizes.join(',')}]`);
 
-    // Search region: only the outer 15% of each edge — markers are at the very corner
-    const searchW = Math.floor(width * 0.15);
-    const searchH = Math.floor(height * 0.15);
+    // ── PHASE 1: Collect ALL dark square candidates across the ENTIRE image ──
+    interface MarkerCandidate {
+      x: number;
+      y: number;
+      score: number;
+      size: number;
+    }
 
-    // Find the best marker in a corner region.
-    // We look for the darkest square-shaped region of the expected size.
-    // Score = (border brightness - interior brightness) × size bonus × corner proximity bonus
-    const findCornerMarker = (
-      rx1: number, ry1: number, rx2: number, ry2: number,
-      label: string
-    ) => {
-      let bestX = (rx1 + rx2) / 2, bestY = (ry1 + ry2) / 2, bestScore = 0, bestSize = estSize;
+    const candidates: MarkerCandidate[] = [];
 
-      // Corner reference point: the actual corner of the image closest to this search region
-      // Markers should be nearest to the image corners
-      const cornerX = rx1 < width / 2 ? 0 : width;
-      const cornerY = ry1 < height / 2 ? 0 : height;
-      const maxCornerDist = Math.sqrt(searchW * searchW + searchH * searchH);
+    for (const size of sizes) {
+      const half = Math.floor(size / 2);
+      const step = Math.max(3, Math.floor(size / 2));
 
-      for (const size of sizes) {
-        const half = Math.floor(size / 2);
-        const step = Math.max(2, Math.floor(size / 3));
+      for (let cy = half + 2; cy < height - half - 2; cy += step) {
+        for (let cx = half + 2; cx < width - half - 2; cx += step) {
+          // Interior brightness (the marker itself — must be dark)
+          const innerAvg = rectAvg(cx - half, cy - half, cx + half, cy + half);
+          if (innerAvg > 80) continue;
 
-        for (let cy = ry1 + half; cy <= ry2 - half; cy += step) {
-          for (let cx = rx1 + half; cx <= rx2 - half; cx += step) {
-            // Interior brightness (the marker itself)
+          // Uniformity: all 4 quadrants must be consistently dark
+          const q1 = rectAvg(cx - half, cy - half, cx, cy);
+          const q2 = rectAvg(cx, cy - half, cx + half, cy);
+          const q3 = rectAvg(cx - half, cy, cx, cy + half);
+          const q4 = rectAvg(cx, cy, cx + half, cy + half);
+          const qMax = Math.max(q1, q2, q3, q4);
+          const qMin = Math.min(q1, q2, q3, q4);
+          if (qMax - qMin > 50) continue; // Not uniform → not a solid square
+
+          // CRITICAL: The surrounding area must be BRIGHT (paper, not desk)
+          // Sample a ring 1.5-3× the marker size around it
+          const ringInner = Math.floor(half * 1.5);
+          const ringOuter = Math.floor(half * 3);
+          
+          // Check all 4 sides for brightness
+          // Corner markers sit near the paper edge, so 1-2 sides may extend into
+          // dark desk/background. We require at least 2 of 4 sides to be bright paper.
+          // This still rejects desk-edge shadows (0 bright sides) while allowing
+          // real markers that are near paper edges.
+          const topRing = rectAvg(cx - ringOuter, cy - ringOuter, cx + ringOuter, cy - ringInner);
+          const botRing = rectAvg(cx - ringOuter, cy + ringInner, cx + ringOuter, cy + ringOuter);
+          const leftRing = rectAvg(cx - ringOuter, cy - ringInner, cx - ringInner, cy + ringInner);
+          const rightRing = rectAvg(cx + ringInner, cy - ringInner, cx + ringOuter, cy + ringInner);
+          
+          const brightThreshold = 150; // Paper should be bright
+          const brightSides = (topRing > brightThreshold ? 1 : 0) +
+                              (botRing > brightThreshold ? 1 : 0) +
+                              (leftRing > brightThreshold ? 1 : 0) +
+                              (rightRing > brightThreshold ? 1 : 0);
+          
+          // At least 2 of 4 sides must have bright paper background
+          // (corner markers near paper edges may have desk on 2 sides)
+          if (brightSides < 2) continue;
+
+          // Border brightness: average of the ring
+          const borderAvg = (topRing + botRing + leftRing + rightRing) / 4;
+          const contrast = borderAvg - innerAvg;
+          if (contrast < 60) continue;
+
+          // Score: contrast × size bonus (larger markers score higher)
+          const sizeBonus = size / baseSize;
+          const score = contrast * sizeBonus;
+
+          candidates.push({ x: cx, y: cy, score, size });
+        }
+      }
+    }
+
+    console.log(`[OMR] Found ${candidates.length} marker candidates`);
+
+    // Remove overlapping candidates (keep highest score within each cluster)
+    candidates.sort((a, b) => b.score - a.score);
+    const merged: MarkerCandidate[] = [];
+    const mergeRadius = baseSize * 2;
+    
+    for (const c of candidates) {
+      const tooClose = merged.some(m => 
+        Math.abs(m.x - c.x) < mergeRadius && Math.abs(m.y - c.y) < mergeRadius
+      );
+      if (!tooClose) {
+        merged.push(c);
+      }
+    }
+
+    console.log(`[OMR] After merge: ${merged.length} unique candidates`);
+    for (const m of merged.slice(0, 8)) {
+      console.log(`[OMR]   candidate: (${Math.round(m.x)},${Math.round(m.y)}) score=${m.score.toFixed(0)} size=${m.size}`);
+    }
+
+    // ── PHASE 2: Select the 4 candidates that form the best rectangle ──
+    // For each candidate, compute which corner it would best serve based on position
+    if (merged.length < 4) {
+      console.log('[OMR] Not enough candidates, using fallback positions');
+      return {
+        found: false,
+        topLeft: { x: width * 0.1, y: height * 0.05 },
+        topRight: { x: width * 0.9, y: height * 0.05 },
+        bottomLeft: { x: width * 0.1, y: height * 0.85 },
+        bottomRight: { x: width * 0.9, y: height * 0.85 },
+      };
+    }
+
+    // Try all combinations of 4 candidates (limit to top 12 to keep it fast)
+    const topN = merged.slice(0, 12);
+    let bestCombo: { tl: MarkerCandidate; tr: MarkerCandidate; bl: MarkerCandidate; br: MarkerCandidate } | null = null;
+    let bestRectScore = 0;
+
+    for (let i = 0; i < topN.length; i++) {
+      for (let j = i + 1; j < topN.length; j++) {
+        for (let k = j + 1; k < topN.length; k++) {
+          for (let l = k + 1; l < topN.length; l++) {
+            const pts = [topN[i], topN[j], topN[k], topN[l]];
+            
+            // Sort into corners: TL has smallest x+y, TR has largest x-y, etc.
+            const sorted = [...pts];
+            const tl = sorted.reduce((a, b) => (a.x + a.y < b.x + b.y ? a : b));
+            const br = sorted.reduce((a, b) => (a.x + a.y > b.x + b.y ? a : b));
+            const tr = sorted.reduce((a, b) => (a.x - a.y > b.x - b.y ? a : b));
+            const bl = sorted.reduce((a, b) => (a.y - a.x > b.y - b.x ? a : b));
+            
+            // All 4 must be different candidates
+            const ids = new Set([tl, tr, bl, br]);
+            if (ids.size < 4) continue;
+            
+            // Check that it forms a reasonable rectangle
+            const topW = tr.x - tl.x;
+            const botW = br.x - bl.x;
+            const leftH = bl.y - tl.y;
+            const rightH = br.y - tr.y;
+            
+            // All dimensions must be positive and significant
+            if (topW < width * 0.2 || botW < width * 0.2) continue;
+            if (leftH < height * 0.2 || rightH < height * 0.2) continue;
+            
+            // Width ratio and height ratio should be close to 1
+            const wRatio = Math.min(topW, botW) / Math.max(topW, botW);
+            const hRatio = Math.min(leftH, rightH) / Math.max(leftH, rightH);
+            if (wRatio < 0.85 || hRatio < 0.85) continue;
+            
+            // Aspect ratio should match paper (roughly 0.7-1.5 for various templates)
+            const avgW = (topW + botW) / 2;
+            const avgH = (leftH + rightH) / 2;
+            const aspect = avgW / avgH;
+            if (aspect < 0.4 || aspect > 2.0) continue;
+            
+            // Left edges should be roughly aligned (TL.x ≈ BL.x)
+            const leftXDiff = Math.abs(tl.x - bl.x) / avgW;
+            const rightXDiff = Math.abs(tr.x - br.x) / avgW;
+            const topYDiff = Math.abs(tl.y - tr.y) / avgH;
+            const botYDiff = Math.abs(bl.y - br.y) / avgH;
+            if (leftXDiff > 0.08 || rightXDiff > 0.08 || topYDiff > 0.08 || botYDiff > 0.08) continue;
+            
+            // Score: product of individual marker scores × rectangle quality
+            const rectQuality = wRatio * hRatio;
+            // Prefer larger rectangles (actual markers span a large area of the paper)
+            const areaBonus = avgW * avgH / (width * height);
+            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus;
+            
+            if (totalScore > bestRectScore) {
+              bestRectScore = totalScore;
+              bestCombo = { tl, tr, bl, br };
+            }
+          }
+        }
+      }
+    }
+
+    if (bestCombo) {
+      // Pixel-level refinement for each marker
+      const refineMarker = (c: MarkerCandidate): { x: number; y: number } => {
+        const half = Math.floor(c.size / 2);
+        const refineR = Math.max(4, Math.floor(c.size / 3));
+        let bestX = c.x, bestY = c.y, bestScore = 0;
+
+        for (let cy = c.y - refineR; cy <= c.y + refineR; cy++) {
+          for (let cx = c.x - refineR; cx <= c.x + refineR; cx++) {
+            if (cx - half < 0 || cx + half >= width || cy - half < 0 || cy + half >= height) continue;
             const innerAvg = rectAvg(cx - half, cy - half, cx + half, cy + half);
-
-            // Must be actually dark
-            if (innerAvg > 100) continue;
-
-            // Border ring brightness (1 marker-width around it)
-            // Sample a wider ring to check paper background
-            const outerAvg = rectAvg(
-              cx - half * 2, cy - half * 2,
-              cx + half * 2, cy + half * 2
-            );
-            // The outer rect includes the inner rect, so extract just the border
-            const outerArea = (4 * half) * (4 * half);
-            const innerArea = (2 * half) * (2 * half);
-            const borderOnlyAvg = (outerAvg * outerArea - innerAvg * innerArea) / Math.max(1, outerArea - innerArea);
-
-            const contrast = borderOnlyAvg - innerAvg;
-            if (contrast < 40) continue;
-
-            // Uniformity: check that the interior is consistently dark
-            // Sample 4 quadrants
-            const q1 = rectAvg(cx - half, cy - half, cx, cy);
-            const q2 = rectAvg(cx, cy - half, cx + half, cy);
-            const q3 = rectAvg(cx - half, cy, cx, cy + half);
-            const q4 = rectAvg(cx, cy, cx + half, cy + half);
-            const qMax = Math.max(q1, q2, q3, q4);
-            const qMin = Math.min(q1, q2, q3, q4);
-            if (qMax - qMin > 60) continue; // not uniform → probably not a solid square
-
-            // Score: contrast × size bonus × corner proximity bonus
-            // Larger markers score higher — real markers are bigger than indicator squares
-            const sizeBonus = size / estSize;
+            if (innerAvg > 80) continue;
             
-            // Corner proximity bonus: markers closer to the image corner get a boost
-            // This helps distinguish real corner markers from indicator squares in the interior
-            const distToCorner = Math.sqrt(Math.pow(cx - cornerX, 2) + Math.pow(cy - cornerY, 2));
-            const cornerBonus = 1 + 0.5 * (1 - distToCorner / maxCornerDist); // 1.0 to 1.5
+            const ringInner = Math.floor(half * 1.5);
+            const ringOuter = Math.floor(half * 3);
+            const topRing = rectAvg(cx - ringOuter, cy - ringOuter, cx + ringOuter, cy - ringInner);
+            const botRing = rectAvg(cx - ringOuter, cy + ringInner, cx + ringOuter, cy + ringOuter);
+            const leftRing = rectAvg(cx - ringOuter, cy - ringInner, cx - ringInner, cy + ringInner);
+            const rightRing = rectAvg(cx + ringInner, cy - ringInner, cx + ringOuter, cy + ringInner);
+            const borderAvg = (topRing + botRing + leftRing + rightRing) / 4;
             
-            const score = contrast * sizeBonus * cornerBonus;
-
+            const score = borderAvg - innerAvg;
             if (score > bestScore) {
               bestScore = score;
               bestX = cx;
               bestY = cy;
-              bestSize = size;
             }
           }
         }
-      }
+        return { x: bestX, y: bestY };
+      };
 
-      // Pixel-level refinement around best position
-      if (bestScore > 0) {
-        const refineR = Math.max(4, Math.floor(bestSize / 3));
-        const half = Math.floor(bestSize / 2);
-        let refinedX = bestX, refinedY = bestY, refinedScore = bestScore;
+      const tl = refineMarker(bestCombo.tl);
+      const tr = refineMarker(bestCombo.tr);
+      const bl = refineMarker(bestCombo.bl);
+      const br = refineMarker(bestCombo.br);
 
-        for (let cy = bestY - refineR; cy <= bestY + refineR; cy++) {
-          for (let cx = bestX - refineR; cx <= bestX + refineR; cx++) {
-            if (cx - half < 0 || cx + half >= width || cy - half < 0 || cy + half >= height) continue;
-            const innerAvg = rectAvg(cx - half, cy - half, cx + half, cy + half);
-            if (innerAvg > 100) continue;
-            const outerAvg = rectAvg(cx - half * 2, cy - half * 2, cx + half * 2, cy + half * 2);
-            const outerArea = (4 * half) * (4 * half);
-            const innerArea = (2 * half) * (2 * half);
-            const borderOnlyAvg = (outerAvg * outerArea - innerAvg * innerArea) / Math.max(1, outerArea - innerArea);
-            const score = (borderOnlyAvg - innerAvg) * (bestSize / estSize);
-            if (score > refinedScore) {
-              refinedScore = score;
-              refinedX = cx;
-              refinedY = cy;
-            }
-          }
-        }
-        bestX = refinedX;
-        bestY = refinedY;
-        bestScore = refinedScore;
-      }
-
-      console.log(`[OMR] ${label}: pos=(${Math.round(bestX)},${Math.round(bestY)}) score=${bestScore.toFixed(0)} size=${bestSize}px`);
-      return { x: bestX, y: bestY, score: bestScore };
-    };
-
-    // Find marker in each corner — search only the outer edge region
-    const tl = findCornerMarker(0, 0, searchW, searchH, 'TL');
-    const tr = findCornerMarker(width - searchW, 0, width, searchH, 'TR');
-    const bl = findCornerMarker(0, height - searchH, searchW, height, 'BL');
-    const br = findCornerMarker(width - searchW, height - searchH, width, height, 'BR');
-
-    console.log(`[OMR] Marker scores: TL=${tl.score.toFixed(0)} TR=${tr.score.toFixed(0)} BL=${bl.score.toFixed(0)} BR=${br.score.toFixed(0)}`);
-    console.log(`[OMR] Marker positions (raw): TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)})`);
-
-    // ── GEOMETRIC CROSS-VALIDATION ──
-    // The markers should form a roughly rectangular shape:
-    //   - Left markers (TL, BL) should have similar X coordinates
-    //   - Right markers (TR, BR) should have similar X coordinates
-    //   - Top markers (TL, TR) should have similar Y coordinates
-    //   - Bottom markers (BL, BR) should have similar Y coordinates
-    //
-    // If a marker's position is inconsistent with its pair, correct it using
-    // the pair's X or Y coordinate. This prevents indicator squares (■ 2.5mm)
-    // or other dark features from being mistaken for corner markers.
-    
-    let finalTL = { x: tl.x, y: tl.y };
-    let finalTR = { x: tr.x, y: tr.y };
-    let finalBL = { x: bl.x, y: bl.y };
-    let finalBR = { x: br.x, y: br.y };
-
-    // Tolerance: markers should be within 5% of frame width/height of each other
-    const frameEstW = Math.abs(tr.x - tl.x);
-    const frameEstH = Math.abs(bl.y - tl.y);
-    const xTolerance = Math.max(20, frameEstW * 0.05);
-    const yTolerance = Math.max(20, frameEstH * 0.05);
-
-    // Check left-side X alignment (TL.x ≈ BL.x)
-    const leftXDiff = Math.abs(tl.x - bl.x);
-    if (leftXDiff > xTolerance) {
-      // Pick the one with higher score, use its X for both
-      if (tl.score >= bl.score) {
-        console.log(`[OMR] BL X corrected: ${Math.round(bl.x)} → ${Math.round(tl.x)} (diff=${Math.round(leftXDiff)}px, TL score higher)`);
-        finalBL.x = tl.x;
-      } else {
-        console.log(`[OMR] TL X corrected: ${Math.round(tl.x)} → ${Math.round(bl.x)} (diff=${Math.round(leftXDiff)}px, BL score higher)`);
-        finalTL.x = bl.x;
-      }
-    }
-
-    // Check right-side X alignment (TR.x ≈ BR.x)
-    const rightXDiff = Math.abs(tr.x - br.x);
-    if (rightXDiff > xTolerance) {
-      if (tr.score >= br.score) {
-        console.log(`[OMR] BR X corrected: ${Math.round(br.x)} → ${Math.round(tr.x)} (diff=${Math.round(rightXDiff)}px, TR score higher)`);
-        finalBR.x = tr.x;
-      } else {
-        console.log(`[OMR] TR X corrected: ${Math.round(tr.x)} → ${Math.round(br.x)} (diff=${Math.round(rightXDiff)}px, BR score higher)`);
-        finalTR.x = br.x;
-      }
-    }
-
-    // Check top-side Y alignment (TL.y ≈ TR.y)
-    const topYDiff = Math.abs(tl.y - tr.y);
-    if (topYDiff > yTolerance) {
-      if (tl.score >= tr.score) {
-        console.log(`[OMR] TR Y corrected: ${Math.round(tr.y)} → ${Math.round(tl.y)} (diff=${Math.round(topYDiff)}px, TL score higher)`);
-        finalTR.y = tl.y;
-      } else {
-        console.log(`[OMR] TL Y corrected: ${Math.round(tl.y)} → ${Math.round(tr.y)} (diff=${Math.round(topYDiff)}px, TR score higher)`);
-        finalTL.y = tr.y;
-      }
-    }
-
-    // Check bottom-side Y alignment (BL.y ≈ BR.y)
-    const bottomYDiff = Math.abs(bl.y - br.y);
-    if (bottomYDiff > yTolerance) {
-      if (bl.score >= br.score) {
-        console.log(`[OMR] BR Y corrected: ${Math.round(br.y)} → ${Math.round(bl.y)} (diff=${Math.round(bottomYDiff)}px, BL score higher)`);
-        finalBR.y = bl.y;
-      } else {
-        console.log(`[OMR] BL Y corrected: ${Math.round(bl.y)} → ${Math.round(br.y)} (diff=${Math.round(bottomYDiff)}px, BR score higher)`);
-        finalBL.y = br.y;
-      }
-    }
-
-    console.log(`[OMR] Marker positions (corrected): TL=(${Math.round(finalTL.x)},${Math.round(finalTL.y)}) TR=(${Math.round(finalTR.x)},${Math.round(finalTR.y)}) BL=(${Math.round(finalBL.x)},${Math.round(finalBL.y)}) BR=(${Math.round(finalBR.x)},${Math.round(finalBR.y)})`);
-
-    // All 4 markers must have a minimum quality score
-    const minScore = 20;
-    const allFound = tl.score >= minScore && tr.score >= minScore && bl.score >= minScore && br.score >= minScore;
-
-    if (allFound) {
-      // Geometry validation using corrected positions
-      const topWidth = Math.sqrt(Math.pow(finalTR.x - finalTL.x, 2) + Math.pow(finalTR.y - finalTL.y, 2));
-      const bottomWidth = Math.sqrt(Math.pow(finalBR.x - finalBL.x, 2) + Math.pow(finalBR.y - finalBL.y, 2));
-      const leftHeight = Math.sqrt(Math.pow(finalBL.x - finalTL.x, 2) + Math.pow(finalBL.y - finalTL.y, 2));
-      const rightHeight = Math.sqrt(Math.pow(finalBR.x - finalTR.x, 2) + Math.pow(finalBR.y - finalTR.y, 2));
-
-      const widthRatio = Math.min(topWidth, bottomWidth) / Math.max(topWidth, bottomWidth);
-      const heightRatio = Math.min(leftHeight, rightHeight) / Math.max(leftHeight, rightHeight);
-      const aspect = (topWidth + bottomWidth) / (leftHeight + rightHeight);
-
-      const geometryOk = widthRatio > 0.80 && heightRatio > 0.80 && aspect > 0.4 && aspect < 2.5;
-
-      console.log(`[OMR] Geometry: topW=${topWidth.toFixed(0)} botW=${bottomWidth.toFixed(0)} leftH=${leftHeight.toFixed(0)} rightH=${rightHeight.toFixed(0)} aspect=${aspect.toFixed(2)} wR=${widthRatio.toFixed(2)} hR=${heightRatio.toFixed(2)} ok=${geometryOk}`);
+      console.log(`[OMR] Selected rectangle: TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)}) rectScore=${bestRectScore.toFixed(0)}`);
 
       return {
-        found: geometryOk,
-        topLeft: finalTL,
-        topRight: finalTR,
-        bottomLeft: finalBL,
-        bottomRight: finalBR,
+        found: true,
+        topLeft: tl,
+        topRight: tr,
+        bottomLeft: bl,
+        bottomRight: br,
       };
     }
 
-    console.log('[OMR] Marker score check failed, using corrected positions anyway');
+    // Fallback: pick the 4 candidates closest to each corner
+    console.log('[OMR] No valid rectangle found, using corner-closest fallback');
+    const pickClosest = (targetX: number, targetY: number) => {
+      let best = merged[0];
+      let bestDist = Infinity;
+      for (const c of merged) {
+        const dist = Math.sqrt(Math.pow(c.x - targetX, 2) + Math.pow(c.y - targetY, 2));
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = c;
+        }
+      }
+      return { x: best.x, y: best.y };
+    };
+
     return {
       found: false,
-      topLeft: finalTL,
-      topRight: finalTR,
-      bottomLeft: finalBL,
-      bottomRight: finalBR,
+      topLeft: pickClosest(0, 0),
+      topRight: pickClosest(width, 0),
+      bottomLeft: pickClosest(0, height),
+      bottomRight: pickClosest(width, height),
     };
   };
 
