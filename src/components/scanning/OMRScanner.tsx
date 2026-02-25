@@ -65,6 +65,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [studentIdError, setStudentIdError] = useState<string | null>(null);
   const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
+  const [debugInfo, setDebugInfo] = useState<string>('');
 
   // Load exam data
   useEffect(() => {
@@ -391,6 +392,20 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       
       // Process the image to detect filled bubbles
       const { studentId, answers, multipleAnswers, idDoubleShades, debugMarkers } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      
+      // Build debug info string for UI display
+      const dbgLines: string[] = [];
+      dbgLines.push(`Image: ${imageData.width}×${imageData.height}`);
+      if (debugMarkers) {
+        dbgLines.push(`TL=(${Math.round(debugMarkers.topLeft.x)},${Math.round(debugMarkers.topLeft.y)})`);
+        dbgLines.push(`TR=(${Math.round(debugMarkers.topRight.x)},${Math.round(debugMarkers.topRight.y)})`);
+        dbgLines.push(`BL=(${Math.round(debugMarkers.bottomLeft.x)},${Math.round(debugMarkers.bottomLeft.y)})`);
+        dbgLines.push(`BR=(${Math.round(debugMarkers.bottomRight.x)},${Math.round(debugMarkers.bottomRight.y)})`);
+        const fw = Math.round(debugMarkers.topRight.x - debugMarkers.topLeft.x);
+        const fh2 = Math.round(debugMarkers.bottomLeft.y - debugMarkers.topLeft.y);
+        dbgLines.push(`Frame: ${fw}×${fh2}`);
+      }
+      setDebugInfo(dbgLines.join(' | '));
       
       // Draw debug overlay showing detected marker positions and ID bubble sample points
       if (debugMarkers) {
@@ -1052,23 +1067,31 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
     console.log(`[OMR] Contrast normalization: min=${gMin} max=${gMax} range=${gRange}`);
 
-    // 2. Find corner alignment markers using grayscale (no binary needed)
+    // 2. Find corner alignment markers using RAW grayscale (before contrast normalization)
+    // This avoids shadows/noise being amplified into false marker candidates
     const dummyBinary = new Uint8Array(0); // not used by new marker detector
-    const markers = findCornerMarkers(dummyBinary, width, height, grayscale);
+    const markers = findCornerMarkers(dummyBinary, width, height, rawGrayscale);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
       'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
 
-    // 3. Fallback: use image bounds with margin if markers not found
+    // 3. Use found markers (even if geometry check failed, the positions are better than raw margins)
+    // Only fall back to image-edge margins if NO markers were found at all (all scores = 0)
     const templateType = numQuestions <= 20 ? 20 : numQuestions <= 50 ? 50 : 100;
     const fallbackMargin = templateType === 100 ? 0.04 : 0.02;
-    const effectiveMarkers = markers.found
-      ? markers
-      : {
+    const noMarkersAtAll = markers.topLeft.x === 0 && markers.topLeft.y === 0;
+    const effectiveMarkers = noMarkersAtAll
+      ? {
           topLeft: { x: width * fallbackMargin, y: height * fallbackMargin },
           topRight: { x: width * (1 - fallbackMargin), y: height * fallbackMargin },
           bottomLeft: { x: width * fallbackMargin, y: height * (1 - fallbackMargin) },
           bottomRight: { x: width * (1 - fallbackMargin), y: height * (1 - fallbackMargin) },
+        }
+      : {
+          topLeft: markers.topLeft,
+          topRight: markers.topRight,
+          bottomLeft: markers.bottomLeft,
+          bottomRight: markers.bottomRight,
         };
 
     // 4. Get template layout for this exam's question count
@@ -1783,6 +1806,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                     )}
                   </div>
                   <p className="text-gray-600">Student ID</p>
+                  {debugInfo && (
+                    <p className="text-xs text-gray-400 mt-1 font-mono break-all">{debugInfo}</p>
+                  )}
                 </div>
               </div>
               <div className="text-right">
