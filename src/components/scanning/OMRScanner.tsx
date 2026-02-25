@@ -404,7 +404,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const fw = Math.round(debugMarkers.topRight.x - debugMarkers.topLeft.x);
         const fh2 = Math.round(debugMarkers.bottomLeft.y - debugMarkers.topLeft.y);
         dbgLines.push(`Frame: ${fw}×${fh2}`);
+        // Show first ID bubble pixel position for verification
+        const layout = getTemplateLayout(exam.num_items);
+        const firstIdPx = mapToPixel(debugMarkers, layout.id.firstColNX, layout.id.firstRowNY);
+        dbgLines.push(`ID0px=(${Math.round(firstIdPx.px)},${Math.round(firstIdPx.py)})`);
       }
+      dbgLines.push(`ID=${studentId}`);
       setDebugInfo(dbgLines.join(' | '));
       
       // Draw debug overlay showing detected marker positions and ID bubble sample points
@@ -463,7 +468,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           dCtx.stroke();
           dCtx.setLineDash([]);
 
-          // Draw ID bubble sample positions as small blue dots
+          // Draw ID bubble sample positions as blue dots with column/row annotations
           // This lets us verify the grid is properly aligned with the ID bubbles
           const layout = getTemplateLayout(exam.num_items);
           for (let col = 0; col < 10; col++) {
@@ -478,11 +483,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               const px = topX + ny * (botX - topX);
               const py = topY + ny * (botY - topY);
               
-              dCtx.fillStyle = 'rgba(0, 100, 255, 0.7)';
+              // Use bright cyan for visibility, larger dots
+              dCtx.fillStyle = 'rgba(0, 200, 255, 0.8)';
               dCtx.beginPath();
-              dCtx.arc(px, py, 3, 0, Math.PI * 2);
+              dCtx.arc(px, py, 5, 0, Math.PI * 2);
               dCtx.fill();
+              dCtx.strokeStyle = '#000000';
+              dCtx.lineWidth = 1;
+              dCtx.stroke();
             }
+            // Label each column at the top
+            const nx0 = layout.id.firstColNX + col * layout.id.colSpacingNX;
+            const ny0 = layout.id.firstRowNY - layout.id.rowSpacingNY * 0.8; // slightly above first row
+            const topX0 = debugMarkers.topLeft.x + nx0 * (debugMarkers.topRight.x - debugMarkers.topLeft.x);
+            const topY0 = debugMarkers.topLeft.y + nx0 * (debugMarkers.topRight.y - debugMarkers.topLeft.y);
+            const botX0 = debugMarkers.bottomLeft.x + nx0 * (debugMarkers.bottomRight.x - debugMarkers.bottomLeft.x);
+            const botY0 = debugMarkers.bottomLeft.y + nx0 * (debugMarkers.bottomRight.y - debugMarkers.bottomLeft.y);
+            const labelPx = topX0 + ny0 * (botX0 - topX0);
+            const labelPy = topY0 + ny0 * (botY0 - topY0);
+            dCtx.fillStyle = '#FFFF00';
+            dCtx.font = 'bold 12px sans-serif';
+            dCtx.fillText(`C${col}`, labelPx - 6, labelPy);
           }
           
           setCapturedImage(debugCanvas.toDataURL('image/png'));
@@ -625,18 +646,24 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     console.log(`[OMR] Marker search: image=${width}x${height}, estSize=${estSize}px, sizes=[${sizes.join(',')}]`);
 
-    // Search region: only the outer 20% of each edge — markers are at the very corner
-    const searchW = Math.floor(width * 0.20);
-    const searchH = Math.floor(height * 0.20);
+    // Search region: only the outer 15% of each edge — markers are at the very corner
+    const searchW = Math.floor(width * 0.15);
+    const searchH = Math.floor(height * 0.15);
 
     // Find the best marker in a corner region.
     // We look for the darkest square-shaped region of the expected size.
-    // Score = (border brightness - interior brightness) × uniformity × size bonus
+    // Score = (border brightness - interior brightness) × size bonus × corner proximity bonus
     const findCornerMarker = (
       rx1: number, ry1: number, rx2: number, ry2: number,
       label: string
     ) => {
       let bestX = (rx1 + rx2) / 2, bestY = (ry1 + ry2) / 2, bestScore = 0, bestSize = estSize;
+
+      // Corner reference point: the actual corner of the image closest to this search region
+      // Markers should be nearest to the image corners
+      const cornerX = rx1 < width / 2 ? 0 : width;
+      const cornerY = ry1 < height / 2 ? 0 : height;
+      const maxCornerDist = Math.sqrt(searchW * searchW + searchH * searchH);
 
       for (const size of sizes) {
         const half = Math.floor(size / 2);
@@ -674,10 +701,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const qMin = Math.min(q1, q2, q3, q4);
             if (qMax - qMin > 60) continue; // not uniform → probably not a solid square
 
-            // Score: contrast × (1 + size bonus)
+            // Score: contrast × size bonus × corner proximity bonus
             // Larger markers score higher — real markers are bigger than indicator squares
             const sizeBonus = size / estSize;
-            const score = contrast * sizeBonus;
+            
+            // Corner proximity bonus: markers closer to the image corner get a boost
+            // This helps distinguish real corner markers from indicator squares in the interior
+            const distToCorner = Math.sqrt(Math.pow(cx - cornerX, 2) + Math.pow(cy - cornerY, 2));
+            const cornerBonus = 1 + 0.5 * (1 - distToCorner / maxCornerDist); // 1.0 to 1.5
+            
+            const score = contrast * sizeBonus * cornerBonus;
 
             if (score > bestScore) {
               bestScore = score;
@@ -728,18 +761,91 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const br = findCornerMarker(width - searchW, height - searchH, width, height, 'BR');
 
     console.log(`[OMR] Marker scores: TL=${tl.score.toFixed(0)} TR=${tr.score.toFixed(0)} BL=${bl.score.toFixed(0)} BR=${br.score.toFixed(0)}`);
-    console.log(`[OMR] Marker positions: TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)})`);
+    console.log(`[OMR] Marker positions (raw): TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)})`);
+
+    // ── GEOMETRIC CROSS-VALIDATION ──
+    // The markers should form a roughly rectangular shape:
+    //   - Left markers (TL, BL) should have similar X coordinates
+    //   - Right markers (TR, BR) should have similar X coordinates
+    //   - Top markers (TL, TR) should have similar Y coordinates
+    //   - Bottom markers (BL, BR) should have similar Y coordinates
+    //
+    // If a marker's position is inconsistent with its pair, correct it using
+    // the pair's X or Y coordinate. This prevents indicator squares (■ 2.5mm)
+    // or other dark features from being mistaken for corner markers.
+    
+    let finalTL = { x: tl.x, y: tl.y };
+    let finalTR = { x: tr.x, y: tr.y };
+    let finalBL = { x: bl.x, y: bl.y };
+    let finalBR = { x: br.x, y: br.y };
+
+    // Tolerance: markers should be within 5% of frame width/height of each other
+    const frameEstW = Math.abs(tr.x - tl.x);
+    const frameEstH = Math.abs(bl.y - tl.y);
+    const xTolerance = Math.max(20, frameEstW * 0.05);
+    const yTolerance = Math.max(20, frameEstH * 0.05);
+
+    // Check left-side X alignment (TL.x ≈ BL.x)
+    const leftXDiff = Math.abs(tl.x - bl.x);
+    if (leftXDiff > xTolerance) {
+      // Pick the one with higher score, use its X for both
+      if (tl.score >= bl.score) {
+        console.log(`[OMR] BL X corrected: ${Math.round(bl.x)} → ${Math.round(tl.x)} (diff=${Math.round(leftXDiff)}px, TL score higher)`);
+        finalBL.x = tl.x;
+      } else {
+        console.log(`[OMR] TL X corrected: ${Math.round(tl.x)} → ${Math.round(bl.x)} (diff=${Math.round(leftXDiff)}px, BL score higher)`);
+        finalTL.x = bl.x;
+      }
+    }
+
+    // Check right-side X alignment (TR.x ≈ BR.x)
+    const rightXDiff = Math.abs(tr.x - br.x);
+    if (rightXDiff > xTolerance) {
+      if (tr.score >= br.score) {
+        console.log(`[OMR] BR X corrected: ${Math.round(br.x)} → ${Math.round(tr.x)} (diff=${Math.round(rightXDiff)}px, TR score higher)`);
+        finalBR.x = tr.x;
+      } else {
+        console.log(`[OMR] TR X corrected: ${Math.round(tr.x)} → ${Math.round(br.x)} (diff=${Math.round(rightXDiff)}px, BR score higher)`);
+        finalTR.x = br.x;
+      }
+    }
+
+    // Check top-side Y alignment (TL.y ≈ TR.y)
+    const topYDiff = Math.abs(tl.y - tr.y);
+    if (topYDiff > yTolerance) {
+      if (tl.score >= tr.score) {
+        console.log(`[OMR] TR Y corrected: ${Math.round(tr.y)} → ${Math.round(tl.y)} (diff=${Math.round(topYDiff)}px, TL score higher)`);
+        finalTR.y = tl.y;
+      } else {
+        console.log(`[OMR] TL Y corrected: ${Math.round(tl.y)} → ${Math.round(tr.y)} (diff=${Math.round(topYDiff)}px, TR score higher)`);
+        finalTL.y = tr.y;
+      }
+    }
+
+    // Check bottom-side Y alignment (BL.y ≈ BR.y)
+    const bottomYDiff = Math.abs(bl.y - br.y);
+    if (bottomYDiff > yTolerance) {
+      if (bl.score >= br.score) {
+        console.log(`[OMR] BR Y corrected: ${Math.round(br.y)} → ${Math.round(bl.y)} (diff=${Math.round(bottomYDiff)}px, BL score higher)`);
+        finalBR.y = bl.y;
+      } else {
+        console.log(`[OMR] BL Y corrected: ${Math.round(bl.y)} → ${Math.round(br.y)} (diff=${Math.round(bottomYDiff)}px, BR score higher)`);
+        finalBL.y = br.y;
+      }
+    }
+
+    console.log(`[OMR] Marker positions (corrected): TL=(${Math.round(finalTL.x)},${Math.round(finalTL.y)}) TR=(${Math.round(finalTR.x)},${Math.round(finalTR.y)}) BL=(${Math.round(finalBL.x)},${Math.round(finalBL.y)}) BR=(${Math.round(finalBR.x)},${Math.round(finalBR.y)})`);
 
     // All 4 markers must have a minimum quality score
     const minScore = 20;
     const allFound = tl.score >= minScore && tr.score >= minScore && bl.score >= minScore && br.score >= minScore;
 
     if (allFound) {
-      // Geometry validation: markers should form a reasonable quadrilateral
-      const topWidth = Math.sqrt(Math.pow(tr.x - tl.x, 2) + Math.pow(tr.y - tl.y, 2));
-      const bottomWidth = Math.sqrt(Math.pow(br.x - bl.x, 2) + Math.pow(br.y - bl.y, 2));
-      const leftHeight = Math.sqrt(Math.pow(bl.x - tl.x, 2) + Math.pow(bl.y - tl.y, 2));
-      const rightHeight = Math.sqrt(Math.pow(br.x - tr.x, 2) + Math.pow(br.y - tr.y, 2));
+      // Geometry validation using corrected positions
+      const topWidth = Math.sqrt(Math.pow(finalTR.x - finalTL.x, 2) + Math.pow(finalTR.y - finalTL.y, 2));
+      const bottomWidth = Math.sqrt(Math.pow(finalBR.x - finalBL.x, 2) + Math.pow(finalBR.y - finalBL.y, 2));
+      const leftHeight = Math.sqrt(Math.pow(finalBL.x - finalTL.x, 2) + Math.pow(finalBL.y - finalTL.y, 2));
+      const rightHeight = Math.sqrt(Math.pow(finalBR.x - finalTR.x, 2) + Math.pow(finalBR.y - finalTR.y, 2));
 
       const widthRatio = Math.min(topWidth, bottomWidth) / Math.max(topWidth, bottomWidth);
       const heightRatio = Math.min(leftHeight, rightHeight) / Math.max(leftHeight, rightHeight);
@@ -751,20 +857,20 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
       return {
         found: geometryOk,
-        topLeft: { x: tl.x, y: tl.y },
-        topRight: { x: tr.x, y: tr.y },
-        bottomLeft: { x: bl.x, y: bl.y },
-        bottomRight: { x: br.x, y: br.y },
+        topLeft: finalTL,
+        topRight: finalTR,
+        bottomLeft: finalBL,
+        bottomRight: finalBR,
       };
     }
 
-    console.log('[OMR] Marker score check failed, using fallback');
+    console.log('[OMR] Marker score check failed, using corrected positions anyway');
     return {
       found: false,
-      topLeft: { x: tl.x, y: tl.y },
-      topRight: { x: tr.x, y: tr.y },
-      bottomLeft: { x: bl.x, y: bl.y },
-      bottomRight: { x: br.x, y: br.y },
+      topLeft: finalTL,
+      topRight: finalTR,
+      bottomLeft: finalBL,
+      bottomRight: finalBR,
     };
   };
 
@@ -1699,6 +1805,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       {/* Mode: Results */}
       {mode === 'results' && scanResult && (
         <div className="space-y-6">
+          {/* Debug overlay image — shows marker positions & ID grid on scanned image */}
+          {capturedImage && (
+            <Card className="overflow-hidden">
+              <div className="relative bg-gray-100">
+                <img
+                  src={capturedImage}
+                  alt="Debug overlay"
+                  className="w-full max-h-[50vh] object-contain mx-auto"
+                />
+              </div>
+            </Card>
+          )}
+
           {/* Student ID Double Shade Error */}
           {idDoubleShadeColumns.length > 0 && (
             <Card className="p-4 border-orange-300 bg-orange-50">
