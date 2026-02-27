@@ -4,20 +4,17 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { 
-  Camera, 
-  Upload, 
   ArrowLeft,
-  RotateCcw,
   X,
   Loader2,
   AlertCircle,
   AlertTriangle,
   CheckCircle,
-  Scan,
   Save,
   User
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getExamById, Exam } from '@/services/examService';
 import { AnswerKeyService } from '@/services/answerKeyService';
@@ -42,17 +39,20 @@ interface ScanResult {
 
 export default function OMRScanner({ examId }: OMRScannerProps) {
   const { user } = useAuth();
+  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const processingCanvasRef = useRef<HTMLCanvasElement>(null);
+  const scanCanvasRef = useRef<HTMLCanvasElement>(null);
+  const autoScanTimerRef = useRef<number | null>(null);
+  const isAutoCapturingRef = useRef(false);
   
   // State
   const [exam, setExam] = useState<Exam | null>(null);
   const [answerKey, setAnswerKey] = useState<AnswerChoice[]>([]);
   const [classData, setClassData] = useState<Class | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<'select' | 'camera' | 'upload' | 'processing' | 'review' | 'results'>('select');
+  const [mode, setMode] = useState<'camera' | 'processing' | 'results'>('camera');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [, setProcessing] = useState(false);
@@ -66,6 +66,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
+  const [markersDetected, setMarkersDetected] = useState(false);
 
   // Load exam data
   useEffect(() => {
@@ -117,9 +118,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     loadExamData();
   }, [examId]);
 
-  // Cleanup camera on unmount
+  // Auto-start camera when exam data is loaded
+  useEffect(() => {
+    if (!loading && exam && !stream && mode === 'camera') {
+      startCamera();
+    }
+  }, [loading, exam]);
+
+  // Cleanup camera and auto-scan on unmount
   useEffect(() => {
     return () => {
+      if (autoScanTimerRef.current) {
+        cancelAnimationFrame(autoScanTimerRef.current);
+      }
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -179,14 +190,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
   };
 
-  // Stop camera
+  // Stop camera and go back to exam page
   const stopCamera = () => {
+    if (autoScanTimerRef.current) {
+      cancelAnimationFrame(autoScanTimerRef.current);
+      autoScanTimerRef.current = null;
+    }
+    isAutoCapturingRef.current = false;
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
       setStream(null);
     }
-    setMode('select');
     setCapturedImage(null);
+    router.push(`/exams/${examId}`);
   };
 
   // Get the guide frame crop region as fractions of the video dimensions
@@ -214,15 +230,17 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return { x, y, w: guideW, h: guideH };
   };
 
-  // Capture photo from camera — cropped to the guide frame
-  const capturePhoto = () => {
+  // Capture photo from camera — cropped to the guide frame, then auto-process
+  const captureAndProcess = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
+    if (isAutoCapturingRef.current) return; // prevent double-capture
+    isAutoCapturingRef.current = true;
     
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     
-    if (!ctx) return;
+    if (!ctx) { isAutoCapturingRef.current = false; return; }
     
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -241,32 +259,180 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // Draw only the cropped region
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
     
-    console.log(`[Capture] Video: ${vw}x${vh}, Crop: x=${sx} y=${sy} w=${sw} h=${sh} (template=${getTemplateType()})`);
+    console.log(`[AutoCapture] Video: ${vw}x${vh}, Crop: x=${sx} y=${sy} w=${sw} h=${sh} (template=${getTemplateType()})`);
     
     const imageData = canvas.toDataURL('image/png');
     setCapturedImage(imageData);
-    setMode('review');
     
     // Stop camera after capture
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
       setStream(null);
     }
-  };
-
-  // Handle file upload
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
     
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const imageData = e.target?.result as string;
-      setCapturedImage(imageData);
-      setMode('review');
+    // Go directly to processing (skip review)
+    setMode('processing');
+  }, [stream, exam]);
+
+  // ── Lightweight marker detection for live video frames ──
+  // Runs on a small downscaled version of the guide-frame crop.
+  // Returns true if 4 dark squares are found in approximately the right corners.
+  const detectMarkersInFrame = useCallback((): boolean => {
+    if (!videoRef.current || !scanCanvasRef.current) return false;
+    
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return false;
+    
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const crop = getGuideCropRegion(vw, vh);
+    
+    const scanCanvas = scanCanvasRef.current;
+    const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return false;
+    
+    // Downscale to ~200px wide for speed
+    const scale = 200 / (crop.w * vw);
+    const dw = Math.round(crop.w * vw * scale);
+    const dh = Math.round(crop.h * vh * scale);
+    
+    scanCanvas.width = dw;
+    scanCanvas.height = dh;
+    
+    ctx.drawImage(
+      video,
+      Math.round(crop.x * vw), Math.round(crop.y * vh),
+      Math.round(crop.w * vw), Math.round(crop.h * vh),
+      0, 0, dw, dh
+    );
+    
+    const imgData = ctx.getImageData(0, 0, dw, dh);
+    const d = imgData.data;
+    
+    // Convert to grayscale
+    const gray = new Uint8Array(dw * dh);
+    for (let i = 0; i < dw * dh; i++) {
+      const idx = i * 4;
+      gray[i] = Math.round(d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114);
+    }
+    
+    // Check each corner region for a dark square with bright surroundings
+    // Marker is ~3.3% of paper width = ~6-7px at 200px wide
+    const markerSize = Math.max(5, Math.round(dw * 0.033));
+    const searchMargin = Math.round(dw * 0.15); // search in outer 15% of each corner
+    
+    const avgBrightness = (x1: number, y1: number, x2: number, y2: number): number => {
+      x1 = Math.max(0, Math.floor(x1));
+      y1 = Math.max(0, Math.floor(y1));
+      x2 = Math.min(dw, Math.floor(x2));
+      y2 = Math.min(dh, Math.floor(y2));
+      let sum = 0, count = 0;
+      for (let py = y1; py < y2; py++) {
+        for (let px = x1; px < x2; px++) {
+          sum += gray[py * dw + px];
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : 255;
     };
-    reader.readAsDataURL(file);
-  };
+    
+    // For the 100-item template, bottom markers are at ~75% down the page, not at the bottom
+    // So we need to search a larger region for bottom corners
+    const t = getTemplateType();
+    const bottomSearchH = t === 100 ? Math.round(dh * 0.5) : searchMargin; // search bottom half for 100-item
+    
+    const cornerRegions = [
+      { name: 'TL', x1: 0, y1: 0, x2: searchMargin, y2: searchMargin },
+      { name: 'TR', x1: dw - searchMargin, y1: 0, x2: dw, y2: searchMargin },
+      { name: 'BL', x1: 0, y1: dh - bottomSearchH, x2: searchMargin, y2: dh },
+      { name: 'BR', x1: dw - searchMargin, y1: dh - bottomSearchH, x2: dw, y2: dh },
+    ];
+    
+    let cornersFound = 0;
+    const half = Math.floor(markerSize / 2);
+    const step = Math.max(2, Math.floor(markerSize / 2));
+    
+    for (const region of cornerRegions) {
+      let found = false;
+      for (let cy = region.y1 + half; cy < region.y2 - half && !found; cy += step) {
+        for (let cx = region.x1 + half; cx < region.x2 - half && !found; cx += step) {
+          // Check if this spot is dark (potential marker)
+          const inner = avgBrightness(cx - half, cy - half, cx + half, cy + half);
+          if (inner > 90) continue;
+          
+          // Check surrounding brightness (should be paper = bright)
+          const ring = Math.floor(half * 2);
+          const top = avgBrightness(cx - ring, cy - ring, cx + ring, cy - half);
+          const bot = avgBrightness(cx - ring, cy + half, cx + ring, cy + ring);
+          const left = avgBrightness(cx - ring, cy - half, cx - half, cy + half);
+          const right = avgBrightness(cx + half, cy - half, cx + ring, cy + half);
+          
+          const brightCount = (top > 140 ? 1 : 0) + (bot > 140 ? 1 : 0) + 
+                              (left > 140 ? 1 : 0) + (right > 140 ? 1 : 0);
+          if (brightCount < 2) continue;
+          
+          const borderAvg = (top + bot + left + right) / 4;
+          if (borderAvg - inner > 50) {
+            found = true;
+          }
+        }
+      }
+      if (found) cornersFound++;
+    }
+    
+    return cornersFound >= 4;
+  }, [exam]);
+
+  // ── Auto-scan loop: continuously check for markers in the video feed ──
+  useEffect(() => {
+    if (mode !== 'camera' || !stream || !exam) return;
+    
+    let frameCount = 0;
+    let consecutiveDetections = 0;
+    const REQUIRED_CONSECUTIVE = 3; // Need 3 consecutive detections to trigger capture
+    let cancelled = false;
+    
+    const scanLoop = () => {
+      if (cancelled || isAutoCapturingRef.current) return;
+      
+      frameCount++;
+      // Only scan every 5th frame (~6fps at 30fps video) to save CPU
+      if (frameCount % 5 === 0) {
+        const detected = detectMarkersInFrame();
+        
+        if (detected) {
+          consecutiveDetections++;
+          setMarkersDetected(true);
+          
+          if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
+            console.log(`[AutoScan] Markers confirmed after ${consecutiveDetections} consecutive detections — capturing!`);
+            captureAndProcess();
+            return; // stop the loop
+          }
+        } else {
+          consecutiveDetections = 0;
+          setMarkersDetected(false);
+        }
+      }
+      
+      autoScanTimerRef.current = requestAnimationFrame(scanLoop);
+    };
+    
+    // Start scanning after a brief delay to let the camera stabilize
+    const startDelay = setTimeout(() => {
+      autoScanTimerRef.current = requestAnimationFrame(scanLoop);
+    }, 1000);
+    
+    return () => {
+      cancelled = true;
+      clearTimeout(startDelay);
+      if (autoScanTimerRef.current) {
+        cancelAnimationFrame(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
+      setMarkersDetected(false);
+    };
+  }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ─── IMAGE ENHANCEMENT: Adaptive brightness (no perspective warp) ───
   // Normalizes lighting across the image to handle shadows and uneven illumination.
@@ -566,11 +732,20 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     } catch (error) {
       console.error('Error processing image:', error);
       toast.error('Failed to process image. Please try again with a clearer image.');
-      setMode('review');
+      isAutoCapturingRef.current = false;
+      setMode('camera');
+      startCamera();
     } finally {
       setProcessing(false);
     }
   }, [capturedImage, exam, answerKey, classData]);
+
+  // Auto-trigger processImage when mode is 'processing' and capturedImage is ready
+  useEffect(() => {
+    if (mode === 'processing' && capturedImage && exam) {
+      processImage();
+    }
+  }, [mode, capturedImage, exam, processImage]);
 
   // ─── CORNER MARKER DETECTION ───
   // Finds the 4 black alignment squares printed at the corners of every answer sheet.
@@ -1543,7 +1718,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         setMultipleAnswerQuestions([]);
         setIdDoubleShadeColumns([]);
         setCapturedImage(null);
-        setMode('select');
+        isAutoCapturingRef.current = false;
+        setMode('camera');
+        startCamera();
       } else {
         toast.error(result.error || 'Failed to save scan');
       }
@@ -1658,48 +1835,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         )}
       </div>
 
-      {/* Mode: Select */}
-      {mode === 'select' && (
-        <div className="grid md:grid-cols-2 gap-6">
-          <Card 
-            className="p-8 border-2 border-dashed hover:border-[#1a472a] cursor-pointer transition-all hover:shadow-lg"
-            onClick={startCamera}
-          >
-            <div className="text-center">
-              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Camera className="w-10 h-10 text-blue-600" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-900">Use Camera</h3>
-              <p className="text-gray-600 mt-2">
-                Capture answer sheet using your device camera
-              </p>
-            </div>
-          </Card>
-
-          <Card 
-            className="p-8 border-2 border-dashed hover:border-[#1a472a] cursor-pointer transition-all hover:shadow-lg"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <div className="text-center">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Upload className="w-10 h-10 text-green-600" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-900">Upload Image</h3>
-              <p className="text-gray-600 mt-2">
-                Select an image file from your device
-              </p>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </Card>
-        </div>
-      )}
-
       {/* Mode: Camera */}
       {mode === 'camera' && (
         <Card className="overflow-hidden">
@@ -1729,21 +1864,25 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   : t === 50
                   ? { width: '55%', aspectRatio: '105 / 297' }     // tall narrow
                   : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
-                const label = t === 20
+                const borderColor = markersDetected ? 'border-green-400' : 'border-white/60';
+                const cornerColor = markersDetected ? 'border-green-400' : 'border-white';
+                const label = markersDetected
+                  ? '✓ Markers detected — capturing...'
+                  : t === 20
                   ? 'Align answer sheet within the frame'
                   : t === 50
                   ? `Align ${t}-item sheet within the frame`
                   : 'Fill the frame with the paper — edges close to border';
                 return (
                   <div className="relative" style={guideStyle}>
-                    <div className="absolute inset-0 border-2 border-white/60 rounded-lg" />
+                    <div className={`absolute inset-0 border-2 ${borderColor} rounded-lg transition-colors duration-200`} />
                     {/* Corner brackets */}
-                    <div className="absolute top-1 left-1 w-6 h-6 border-t-2 border-l-2 border-white rounded-tl" />
-                    <div className="absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 border-white rounded-tr" />
-                    <div className="absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 border-white rounded-bl" />
-                    <div className="absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 border-white rounded-br" />
+                    <div className={`absolute top-1 left-1 w-6 h-6 border-t-2 border-l-2 ${cornerColor} rounded-tl transition-colors duration-200`} />
+                    <div className={`absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 ${cornerColor} rounded-tr transition-colors duration-200`} />
+                    <div className={`absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 ${cornerColor} rounded-bl transition-colors duration-200`} />
+                    <div className={`absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 ${cornerColor} rounded-br transition-colors duration-200`} />
                     {/* Label */}
-                    <p className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-white text-xs bg-black/60 px-3 py-1.5 rounded-full">
+                    <p className={`absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-white text-xs ${markersDetected ? 'bg-green-600/80' : 'bg-black/60'} px-3 py-1.5 rounded-full transition-colors duration-200`}>
                       {label}
                     </p>
                   </div>
@@ -1751,40 +1890,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               })()}
             </div>
           </div>
-          <div className="p-4 flex justify-center gap-4">
+          <div className="p-4 flex justify-center">
             <Button variant="outline" onClick={stopCamera}>
               <X className="w-4 h-4 mr-2" />
               Cancel
-            </Button>
-            <Button onClick={capturePhoto} className="bg-[#1a472a] hover:bg-[#2d6b47]">
-              <Camera className="w-4 h-4 mr-2" />
-              Capture
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Mode: Review */}
-      {mode === 'review' && capturedImage && (
-        <Card className="overflow-hidden">
-          <div className="relative bg-gray-100">
-            <img 
-              src={capturedImage} 
-              alt="Captured answer sheet"
-              className="w-full max-h-[60vh] object-contain mx-auto"
-            />
-          </div>
-          <div className="p-4 flex justify-center gap-4">
-            <Button variant="outline" onClick={() => {
-              setCapturedImage(null);
-              setMode('select');
-            }}>
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Retake
-            </Button>
-            <Button onClick={processImage} className="bg-[#1a472a] hover:bg-[#2d6b47]">
-              <Scan className="w-4 h-4 mr-2" />
-              Process & Grade
             </Button>
           </div>
         </Card>
@@ -2078,7 +2187,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               setMultipleAnswerQuestions([]);
               setIdDoubleShadeColumns([]);
               setCapturedImage(null);
-              setMode('select');
+              isAutoCapturingRef.current = false;
+              setMode('camera');
+              startCamera();
             }}>
               <X className="w-4 h-4 mr-2" />
               Discard & Scan Again
@@ -2115,7 +2226,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       )}
 
       {/* Recent Scans */}
-      {recentScans.length > 0 && mode === 'select' && (
+      {recentScans.length > 0 && mode === 'camera' && (
         <Card className="p-6">
           <h3 className="text-lg font-bold text-gray-900 mb-4">Recent Scans This Session</h3>
           <div className="space-y-2">
@@ -2140,6 +2251,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       {/* Hidden canvases for processing */}
       <canvas ref={canvasRef} className="hidden" />
       <canvas ref={processingCanvasRef} className="hidden" />
+      <canvas ref={scanCanvasRef} className="hidden" />
     </div>
   );
 }
