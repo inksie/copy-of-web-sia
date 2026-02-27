@@ -46,6 +46,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const scanCanvasRef = useRef<HTMLCanvasElement>(null);
   const autoScanTimerRef = useRef<number | null>(null);
   const isAutoCapturingRef = useRef(false);
+  const streamRef = useRef<MediaStream | null>(null);
   
   // State
   const [exam, setExam] = useState<Exam | null>(null);
@@ -67,6 +68,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const [markersDetected, setMarkersDetected] = useState(false);
+
+  // Keep streamRef in sync with stream state
+  useEffect(() => {
+    streamRef.current = stream;
+  }, [stream]);
 
   // Load exam data
   useEffect(() => {
@@ -264,23 +270,24 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const imageData = canvas.toDataURL('image/png');
     setCapturedImage(imageData);
     
-    // Stop camera after capture
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    // Stop camera after capture — use streamRef for latest value
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
       setStream(null);
     }
     
     // Go directly to processing (skip review)
     setMode('processing');
-  }, [stream, exam]);
+  }, [exam]); // removed stream dependency — use ref instead
 
   // ── Lightweight marker detection for live video frames ──
-  // Runs on a small downscaled version of the guide-frame crop.
-  // Returns true if 4 dark squares are found in approximately the right corners.
+  // Runs on a downscaled version of the guide-frame crop.
+  // Returns true if 4 dark squares are found in approximately the right positions.
   const detectMarkersInFrame = useCallback((): boolean => {
     if (!videoRef.current || !scanCanvasRef.current) return false;
     
     const video = videoRef.current;
+    if (video.readyState < 2) return false; // HAVE_CURRENT_DATA
     if (video.videoWidth === 0 || video.videoHeight === 0) return false;
     
     const vw = video.videoWidth;
@@ -291,8 +298,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return false;
     
-    // Downscale to ~200px wide for speed
-    const scale = 200 / (crop.w * vw);
+    // Use ~320px wide for better detection accuracy
+    const targetW = 320;
+    const scale = targetW / (crop.w * vw);
     const dw = Math.round(crop.w * vw * scale);
     const dh = Math.round(crop.h * vh * scale);
     
@@ -307,28 +315,29 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     );
     
     const imgData = ctx.getImageData(0, 0, dw, dh);
-    const d = imgData.data;
+    const pixels = imgData.data;
     
     // Convert to grayscale
     const gray = new Uint8Array(dw * dh);
     for (let i = 0; i < dw * dh; i++) {
       const idx = i * 4;
-      gray[i] = Math.round(d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114);
+      gray[i] = Math.round(pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114);
     }
     
-    // Check each corner region for a dark square with bright surroundings
-    // Marker is ~3.3% of paper width = ~6-7px at 200px wide
-    const markerSize = Math.max(5, Math.round(dw * 0.033));
-    const searchMargin = Math.round(dw * 0.15); // search in outer 15% of each corner
+    // Marker is ~3.3% of paper width → ~10px at 320px wide
+    const markerSize = Math.max(6, Math.round(dw * 0.035));
+    const half = Math.floor(markerSize / 2);
+    const step = Math.max(2, Math.floor(markerSize / 3));
     
     const avgBrightness = (x1: number, y1: number, x2: number, y2: number): number => {
       x1 = Math.max(0, Math.floor(x1));
       y1 = Math.max(0, Math.floor(y1));
       x2 = Math.min(dw, Math.floor(x2));
       y2 = Math.min(dh, Math.floor(y2));
+      if (x2 <= x1 || y2 <= y1) return 255;
       let sum = 0, count = 0;
-      for (let py = y1; py < y2; py++) {
-        for (let px = x1; px < x2; px++) {
+      for (let py = y1; py < y2; py += 2) {
+        for (let px = x1; px < x2; px += 2) {
           sum += gray[py * dw + px];
           count++;
         }
@@ -336,48 +345,63 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       return count > 0 ? sum / count : 255;
     };
     
-    // For the 100-item template, bottom markers are at ~75% down the page, not at the bottom
-    // So we need to search a larger region for bottom corners
+    // Define search regions for each corner.
+    // For 100-item: bottom markers are at ~75% of page height, not at the page bottom.
+    // The guide frame crops the full page, so bottom markers are at ~75% of frame height.
     const t = getTemplateType();
-    const bottomSearchH = t === 100 ? Math.round(dh * 0.5) : searchMargin; // search bottom half for 100-item
+    const margin = Math.round(dw * 0.20); // 20% of width for horizontal search
+    const topH = Math.round(dh * 0.20);   // top 20% for top markers
+    
+    // Bottom markers: for 100-item, they're at ~75% down (markers at Y=222 on 297mm page)
+    // Search from 55% to 85% of frame height for 100-item, bottom 30% for others
+    const botY1 = t === 100 ? Math.round(dh * 0.55) : Math.round(dh * 0.70);
+    const botY2 = t === 100 ? Math.round(dh * 0.90) : dh;
     
     const cornerRegions = [
-      { name: 'TL', x1: 0, y1: 0, x2: searchMargin, y2: searchMargin },
-      { name: 'TR', x1: dw - searchMargin, y1: 0, x2: dw, y2: searchMargin },
-      { name: 'BL', x1: 0, y1: dh - bottomSearchH, x2: searchMargin, y2: dh },
-      { name: 'BR', x1: dw - searchMargin, y1: dh - bottomSearchH, x2: dw, y2: dh },
+      { name: 'TL', x1: 0, y1: 0, x2: margin, y2: topH },
+      { name: 'TR', x1: dw - margin, y1: 0, x2: dw, y2: topH },
+      { name: 'BL', x1: 0, y1: botY1, x2: margin, y2: botY2 },
+      { name: 'BR', x1: dw - margin, y1: botY1, x2: dw, y2: botY2 },
     ];
     
     let cornersFound = 0;
-    const half = Math.floor(markerSize / 2);
-    const step = Math.max(2, Math.floor(markerSize / 2));
+    const foundCorners: string[] = [];
     
     for (const region of cornerRegions) {
       let found = false;
-      for (let cy = region.y1 + half; cy < region.y2 - half && !found; cy += step) {
-        for (let cx = region.x1 + half; cx < region.x2 - half && !found; cx += step) {
+      for (let cy = region.y1 + half + 1; cy < region.y2 - half - 1 && !found; cy += step) {
+        for (let cx = region.x1 + half + 1; cx < region.x2 - half - 1 && !found; cx += step) {
           // Check if this spot is dark (potential marker)
           const inner = avgBrightness(cx - half, cy - half, cx + half, cy + half);
-          if (inner > 90) continue;
+          if (inner > 100) continue; // relaxed from 90
           
           // Check surrounding brightness (should be paper = bright)
-          const ring = Math.floor(half * 2);
-          const top = avgBrightness(cx - ring, cy - ring, cx + ring, cy - half);
-          const bot = avgBrightness(cx - ring, cy + half, cx + ring, cy + ring);
-          const left = avgBrightness(cx - ring, cy - half, cx - half, cy + half);
-          const right = avgBrightness(cx + half, cy - half, cx + ring, cy + half);
+          const ring = Math.max(half + 2, Math.floor(half * 1.8));
+          const topB = avgBrightness(cx - ring, Math.max(0, cy - ring), cx + ring, cy - half);
+          const botB = avgBrightness(cx - ring, cy + half, cx + ring, Math.min(dh, cy + ring));
+          const leftB = avgBrightness(Math.max(0, cx - ring), cy - half, cx - half, cy + half);
+          const rightB = avgBrightness(cx + half, cy - half, Math.min(dw, cx + ring), cy + half);
           
-          const brightCount = (top > 140 ? 1 : 0) + (bot > 140 ? 1 : 0) + 
-                              (left > 140 ? 1 : 0) + (right > 140 ? 1 : 0);
+          // At least 2 of 4 sides must be bright (paper)
+          const brightCount = (topB > 130 ? 1 : 0) + (botB > 130 ? 1 : 0) + 
+                              (leftB > 130 ? 1 : 0) + (rightB > 130 ? 1 : 0);
           if (brightCount < 2) continue;
           
-          const borderAvg = (top + bot + left + right) / 4;
-          if (borderAvg - inner > 50) {
+          const borderAvg = (topB + botB + leftB + rightB) / 4;
+          if (borderAvg - inner > 40) { // relaxed from 50
             found = true;
           }
         }
       }
-      if (found) cornersFound++;
+      if (found) {
+        cornersFound++;
+        foundCorners.push(region.name);
+      }
+    }
+    
+    // Log periodically for debugging (every ~2 seconds at 6fps)
+    if (Math.random() < 0.08) {
+      console.log(`[LiveScan] ${dw}x${dh} markerSize=${markerSize} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
     }
     
     return cornersFound >= 4;
