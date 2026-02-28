@@ -872,8 +872,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
           // Draw ID bubble sample positions as blue dots with column/row annotations
           // This lets us verify the grid is properly aligned with the ID bubbles
+          // We use 9 columns for 9-digit student IDs
           const layout = getTemplateLayout(exam.num_items);
-          for (let col = 0; col < 10; col++) {
+          for (let col = 0; col < 9; col++) {
             for (let row = 0; row < 10; row++) {
               const nx = layout.id.firstColNX + col * layout.id.colSpacingNX;
               const ny = layout.id.firstRowNY + row * layout.id.rowSpacingNY;
@@ -1840,7 +1841,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
   // ─── DETECT STUDENT ID ───
   // sampleBubbleAt returns RAW BRIGHTNESS (0-255): lower = darker = filled.
-  // For each ID column (10 digits 0-9), we find the DARKEST bubble.
+  // For each ID column (9 columns, digits 0-9), we find the DARKEST bubble.
   // Detection uses a robust approach:
   //   1. The darkest must be significantly darker than the MEDIAN of all 10 bubbles
   //   2. We use the gap between darkest and 2nd-darkest as additional confidence
@@ -1873,11 +1874,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     // Log the pixel position of the first and last ID bubbles for visual verification
     const firstIdPx = mapToPixel(markers, id.firstColNX, id.firstRowNY);
-    const lastIdPx = mapToPixel(markers, id.firstColNX + 9 * id.colSpacingNX, id.firstRowNY + 9 * id.rowSpacingNY);
+    const lastIdPx = mapToPixel(markers, id.firstColNX + 8 * id.colSpacingNX, id.firstRowNY + 9 * id.rowSpacingNY);
     console.log(`[ID] First bubble px=(${Math.round(firstIdPx.px)},${Math.round(firstIdPx.py)}), Last bubble px=(${Math.round(lastIdPx.px)},${Math.round(lastIdPx.py)})`);
     console.log(`[ID] Frame: TL=(${Math.round(markers.topLeft.x)},${Math.round(markers.topLeft.y)}) BR=(${Math.round(markers.bottomRight.x)},${Math.round(markers.bottomRight.y)}) size=${Math.round(frameW)}x${Math.round(frameH)}`);
 
-    for (let col = 0; col < 10; col++) {
+    // Process 9 columns for 9-digit student IDs
+    for (let col = 0; col < 9; col++) {
       const fills: number[] = []; // raw brightness values (lower = darker)
 
       for (let row = 0; row < 10; row++) {
@@ -2526,7 +2528,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   {/* Student ID Digit Boxes - Visual display of each scanned column */}
                   {rawIdDigits.length > 0 && (
                     <div className="mt-3">
-                      <p className="text-xs text-gray-500 mb-1">Scanned ID Columns (10 digits):</p>
+                      <p className="text-xs text-gray-500 mb-1">Scanned ID Columns (9 digits):</p>
                       <div className="flex gap-1">
                         {rawIdDigits.map((digit, idx) => {
                           const isUnshaded = digit === -1;
