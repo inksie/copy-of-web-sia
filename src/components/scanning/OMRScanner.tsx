@@ -1007,17 +1007,22 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // CHALLENGE: The paper may not fill the entire image — there can be dark desk/background
   // around the paper edges. The detector must find markers ON THE PAPER, not at image edges.
   //
+  // IMPORTANT FOR 100-ITEM: The bottom markers are at ~75% of page height (Y=222 on 297mm page),
+  // NOT at the page bottom. The marker frame aspect ratio is 197/215.5 ≈ 0.91 (wider than tall).
+  //
   // STRATEGY:
   //   1. Scan the ENTIRE image for dark, uniform, square-shaped regions
   //   2. Require bright PAPER background around each candidate (rejects desk edges/shadows)
   //   3. Collect ALL good candidates across the whole image
   //   4. Pick the 4 candidates that form the best axis-aligned rectangle
   //      (top-left-most, top-right-most, bottom-left-most, bottom-right-most)
+  //   5. For 100-item templates, prefer rectangles where bottom markers are at ~75% of image height
   const findCornerMarkers = (
     _binary: Uint8Array,
     width: number,
     height: number,
-    grayscale?: Uint8Array
+    grayscale?: Uint8Array,
+    templateType?: 20 | 50 | 100
   ): {
     found: boolean;
     confidence: number;
@@ -1217,10 +1222,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const hRatio = Math.min(leftH, rightH) / Math.max(leftH, rightH);
             if (wRatio < 0.85 || hRatio < 0.85) continue;
             
-            // Aspect ratio should match paper (roughly 0.7-1.5 for various templates)
+            // Aspect ratio check - varies by template type
+            // 100-item: marker frame is 197mm wide x 215.5mm tall → aspect ≈ 0.91
+            // 20/50-item: marker frame is more square-ish
             const avgW = (topW + botW) / 2;
             const avgH = (leftH + rightH) / 2;
             const aspect = avgW / avgH;
+            
+            // For 100-item, the marker frame aspect ratio is ~0.91 (fw/fh = 197/215.5)
+            // But the captured image might have the paper at different positions
+            // Allow a wider range but prefer the expected aspect ratio
             if (aspect < 0.4 || aspect > 2.0) continue;
             
             // Left edges should be roughly aligned (TL.x ≈ BL.x)
@@ -1228,13 +1239,50 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const rightXDiff = Math.abs(tr.x - br.x) / avgW;
             const topYDiff = Math.abs(tl.y - tr.y) / avgH;
             const botYDiff = Math.abs(bl.y - br.y) / avgH;
-            if (leftXDiff > 0.08 || rightXDiff > 0.08 || topYDiff > 0.08 || botYDiff > 0.08) continue;
+            // Allow more skew tolerance (up to 15% instead of 8%)
+            if (leftXDiff > 0.15 || rightXDiff > 0.15 || topYDiff > 0.15 || botYDiff > 0.15) continue;
             
             // Score: product of individual marker scores × rectangle quality
             const rectQuality = wRatio * hRatio;
-            // Prefer larger rectangles (actual markers span a large area of the paper)
+            
+            // For 100-item templates, check if bottom markers are at approximately
+            // the right position (should be around 70-80% down from top markers if paper fills most of frame)
+            // The key insight: bottom markers should NOT be at the image bottom
+            let positionBonus = 1.0;
+            if (templateType === 100) {
+              // Check if bottom markers are in the expected vertical range
+              // If paper fills frame, bottom markers should be at ~75% of image height
+              // But if there's background below, they could be higher
+              const bottomY = (bl.y + br.y) / 2;
+              const topY = (tl.y + tr.y) / 2;
+              const markerFrameHeight = bottomY - topY;
+              
+              // For 100-item, the marker frame should be taller than wide (aspect ~0.91)
+              // If the frame height is less than ~60% of image height, likely wrong markers
+              const frameHeightRatio = markerFrameHeight / height;
+              
+              // Bottom markers should be in the range 50-90% of image height
+              // (They can't be at the very bottom because there's page content below)
+              const bottomYRatio = bottomY / height;
+              
+              // Prefer rectangles where:
+              // 1. Bottom markers are NOT at the very bottom of the image (< 95%)
+              // 2. The frame height is at least 40% of the image
+              if (bottomYRatio > 0.95) {
+                positionBonus = 0.3; // Penalize if bottom markers are at image edge
+              } else if (bottomYRatio < 0.50) {
+                positionBonus = 0.5; // Penalize if bottom markers are too high
+              } else if (frameHeightRatio < 0.35) {
+                positionBonus = 0.4; // Penalize very small frames
+              } else {
+                // Good position - bonus based on how close to expected
+                positionBonus = 1.0 + (frameHeightRatio * 0.5); // Prefer larger frames
+              }
+            }
+            
+            // Prefer larger rectangles but with position bonus for 100-item
             const areaBonus = avgW * avgH / (width * height);
-            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus;
+            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus * positionBonus;
             
             if (totalScore > bestRectScore) {
               bestRectScore = totalScore;
@@ -1640,14 +1688,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // 2. Find corner alignment markers using RAW grayscale (before contrast normalization)
     // This avoids shadows/noise being amplified into false marker candidates
     const dummyBinary = new Uint8Array(0); // not used by new marker detector
-    const markers = findCornerMarkers(dummyBinary, width, height, rawGrayscale);
+    
+    // Determine template type BEFORE finding markers (needed for position heuristics)
+    const templateType = numQuestions <= 20 ? 20 : numQuestions <= 50 ? 50 : 100;
+    
+    const markers = findCornerMarkers(dummyBinary, width, height, rawGrayscale, templateType);
     console.log('[OMR] Corner markers found:', markers.found,
       'TL:', Math.round(markers.topLeft.x), Math.round(markers.topLeft.y),
-      'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y));
+      'BR:', Math.round(markers.bottomRight.x), Math.round(markers.bottomRight.y),
+      'Template:', templateType);
 
     // 3. Use found markers (even if geometry check failed, the positions are better than raw margins)
     // Only fall back to image-edge margins if NO markers were found at all (all scores = 0)
-    const templateType = numQuestions <= 20 ? 20 : numQuestions <= 50 ? 50 : 100;
     const fallbackMargin = templateType === 100 ? 0.04 : 0.02;
     const noMarkersAtAll = markers.topLeft.x === 0 && markers.topLeft.y === 0;
     const effectiveMarkers = noMarkersAtAll
