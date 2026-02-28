@@ -68,6 +68,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const [markersDetected, setMarkersDetected] = useState(false);
+  const [stabilizationProgress, setStabilizationProgress] = useState(0); // 0-100%
   const [alignmentError, setAlignmentError] = useState<string | null>(null);
 
   // Keep streamRef in sync with stream state
@@ -417,7 +418,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     let frameCount = 0;
     let consecutiveDetections = 0;
-    const REQUIRED_CONSECUTIVE = 3; // Need 3 consecutive detections to trigger capture
+    // Need ~12-18 consecutive detections to trigger capture (2-3 seconds at 6fps)
+    // This gives users time to stabilize their phone before auto-capture
+    const REQUIRED_CONSECUTIVE = 15; // ~2.5 seconds of stable marker detection
     let cancelled = false;
     
     const scanLoop = () => {
@@ -431,15 +434,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (detected) {
           consecutiveDetections++;
           setMarkersDetected(true);
+          // Update stabilization progress (0-100%)
+          const progress = Math.min(100, Math.round((consecutiveDetections / REQUIRED_CONSECUTIVE) * 100));
+          setStabilizationProgress(progress);
           
           if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
-            console.log(`[AutoScan] Markers confirmed after ${consecutiveDetections} consecutive detections — capturing!`);
+            console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 6).toFixed(1)}s — capturing!`);
             captureAndProcess();
             return; // stop the loop
           }
         } else {
           consecutiveDetections = 0;
           setMarkersDetected(false);
+          setStabilizationProgress(0);
         }
       }
       
@@ -459,6 +466,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         autoScanTimerRef.current = null;
       }
       setMarkersDetected(false);
+      setStabilizationProgress(0);
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
@@ -2132,8 +2140,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
                 const borderColor = markersDetected ? 'border-green-400' : 'border-white/60';
                 const cornerColor = markersDetected ? 'border-green-400' : 'border-white';
+                // Show stabilization progress when markers are detected
                 const label = markersDetected
-                  ? '✓ Markers detected — capturing...'
+                  ? stabilizationProgress >= 100
+                    ? '✓ Capturing now...'
+                    : `Hold steady... ${stabilizationProgress}%`
                   : t === 20
                   ? 'Align answer sheet within the frame'
                   : t === 50
@@ -2147,6 +2158,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                     <div className={`absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 ${cornerColor} rounded-tr transition-colors duration-200`} />
                     <div className={`absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 ${cornerColor} rounded-bl transition-colors duration-200`} />
                     <div className={`absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 ${cornerColor} rounded-br transition-colors duration-200`} />
+                    {/* Stabilization progress bar when markers detected */}
+                    {markersDetected && stabilizationProgress < 100 && (
+                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 rounded-b-lg overflow-hidden">
+                        <div 
+                          className="h-full bg-green-400 transition-all duration-150"
+                          style={{ width: `${stabilizationProgress}%` }}
+                        />
+                      </div>
+                    )}
                     {/* Label */}
                     <p className={`absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-white text-xs ${markersDetected ? 'bg-green-600/80' : 'bg-black/60'} px-3 py-1.5 rounded-full transition-colors duration-200`}>
                       {label}
