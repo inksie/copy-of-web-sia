@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   CheckCircle,
   Save,
-  User
+  User,
+  Camera
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -413,8 +414,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [exam]);
 
   // ── Auto-scan loop: continuously check for markers in the video feed ──
+  // For 100-item templates, we only detect markers but don't auto-capture (manual button instead)
   useEffect(() => {
     if (mode !== 'camera' || !stream || !exam) return;
+    
+    const templateType = getTemplateType();
+    const isManualCapture = templateType === 100; // 100-item uses manual capture button
     
     let frameCount = 0;
     let consecutiveDetections = 0;
@@ -434,14 +439,22 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (detected) {
           consecutiveDetections++;
           setMarkersDetected(true);
-          // Update stabilization progress (0-100%)
-          const progress = Math.min(100, Math.round((consecutiveDetections / REQUIRED_CONSECUTIVE) * 100));
-          setStabilizationProgress(progress);
           
-          if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
-            console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 6).toFixed(1)}s — capturing!`);
-            captureAndProcess();
-            return; // stop the loop
+          // For manual capture mode (100-item), just show that markers are detected
+          // For auto-capture mode (20/50-item), track stabilization and auto-capture
+          if (isManualCapture) {
+            // Keep markers detected state but don't auto-capture
+            setStabilizationProgress(100); // Show as ready
+          } else {
+            // Update stabilization progress (0-100%)
+            const progress = Math.min(100, Math.round((consecutiveDetections / REQUIRED_CONSECUTIVE) * 100));
+            setStabilizationProgress(progress);
+            
+            if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
+              console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 6).toFixed(1)}s — capturing!`);
+              captureAndProcess();
+              return; // stop the loop
+            }
           }
         } else {
           consecutiveDetections = 0;
@@ -2140,16 +2153,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
                 const borderColor = markersDetected ? 'border-green-400' : 'border-white/60';
                 const cornerColor = markersDetected ? 'border-green-400' : 'border-white';
-                // Show stabilization progress when markers are detected
-                const label = markersDetected
-                  ? stabilizationProgress >= 100
-                    ? '✓ Capturing now...'
-                    : `Hold steady... ${stabilizationProgress}%`
-                  : t === 20
-                  ? 'Align answer sheet within the frame'
-                  : t === 50
-                  ? `Align ${t}-item sheet within the frame`
-                  : 'Fill the frame with the paper — edges close to border';
+                const isManualCapture = t === 100; // 100-item uses manual capture
+                // Show different labels based on template type and marker detection
+                const label = isManualCapture
+                  ? markersDetected
+                    ? '✓ Ready — tap Capture below'
+                    : 'Align sheet and tap Capture when ready'
+                  : markersDetected
+                    ? stabilizationProgress >= 100
+                      ? '✓ Capturing now...'
+                      : `Hold steady... ${stabilizationProgress}%`
+                    : t === 20
+                    ? 'Align answer sheet within the frame'
+                    : `Align ${t}-item sheet within the frame`;
                 return (
                   <div className="relative" style={guideStyle}>
                     <div className={`absolute inset-0 border-2 ${borderColor} rounded-lg transition-colors duration-200`} />
@@ -2158,8 +2174,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                     <div className={`absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 ${cornerColor} rounded-tr transition-colors duration-200`} />
                     <div className={`absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 ${cornerColor} rounded-bl transition-colors duration-200`} />
                     <div className={`absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 ${cornerColor} rounded-br transition-colors duration-200`} />
-                    {/* Stabilization progress bar when markers detected */}
-                    {markersDetected && stabilizationProgress < 100 && (
+                    {/* Stabilization progress bar when markers detected (only for auto-capture modes) */}
+                    {!isManualCapture && markersDetected && stabilizationProgress < 100 && (
                       <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 rounded-b-lg overflow-hidden">
                         <div 
                           className="h-full bg-green-400 transition-all duration-150"
@@ -2176,7 +2192,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               })()}
             </div>
           </div>
-          <div className="p-4 flex justify-center">
+          <div className="p-4 flex justify-center gap-3">
+            {/* Capture button for 100-item (manual capture) */}
+            {getTemplateType() === 100 && (
+              <Button 
+                onClick={captureAndProcess}
+                disabled={!markersDetected}
+                className={`${markersDetected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
+              >
+                <Camera className="w-4 h-4 mr-2" />
+                Capture
+              </Button>
+            )}
             <Button variant="outline" onClick={stopCamera}>
               <X className="w-4 h-4 mr-2" />
               Cancel
