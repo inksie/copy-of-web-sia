@@ -1187,8 +1187,40 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       };
     }
 
+    // For 100-item templates, pre-filter candidates to those near edges
+    // This removes false positives from section markers (■) inside the sheet
+    let filteredCandidates = merged;
+    if (templateType === 100) {
+      // For 100-item, the paper fills most of the image
+      // True corner markers should be in the outer 35% of image width/height
+      // (allowing for some paper rotation/offset)
+      const edgeMarginX = width * 0.35;
+      const edgeMarginY = height * 0.35;
+      
+      filteredCandidates = merged.filter(c => {
+        const nearLeftEdge = c.x < edgeMarginX;
+        const nearRightEdge = c.x > width - edgeMarginX;
+        const nearTopEdge = c.y < edgeMarginY;
+        const nearBottomEdge = c.y > height - edgeMarginY;
+        
+        // Must be near at least one horizontal AND one vertical edge
+        const nearHorizontalEdge = nearLeftEdge || nearRightEdge;
+        const nearVerticalEdge = nearTopEdge || nearBottomEdge;
+        
+        return nearHorizontalEdge && nearVerticalEdge;
+      });
+      
+      console.log(`[OMR] 100-item edge filter: ${merged.length} → ${filteredCandidates.length} candidates`);
+      
+      // If edge filtering removed too many, fall back to all candidates
+      if (filteredCandidates.length < 4) {
+        console.log('[OMR] Edge filter too aggressive, using all candidates');
+        filteredCandidates = merged;
+      }
+    }
+
     // Try all combinations of 4 candidates (limit to top 12 to keep it fast)
-    const topN = merged.slice(0, 12);
+    const topN = filteredCandidates.slice(0, 12);
     let bestCombo: { tl: MarkerCandidate; tr: MarkerCandidate; bl: MarkerCandidate; br: MarkerCandidate } | null = null;
     let bestRectScore = 0;
 
@@ -1232,9 +1264,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             const aspect = avgW / avgH;
             
             // For 100-item, the marker frame aspect ratio is ~0.91 (fw/fh = 197/215.5)
-            // But the captured image might have the paper at different positions
-            // Allow a wider range but prefer the expected aspect ratio
-            if (aspect < 0.4 || aspect > 2.0) continue;
+            // Enforce stricter aspect ratio for 100-item templates
+            if (templateType === 100) {
+              // 100-item should have aspect ratio 0.7-1.1 (allowing for rotation/perspective)
+              if (aspect < 0.7 || aspect > 1.1) continue;
+            } else {
+              // Other templates: allow wider range
+              if (aspect < 0.4 || aspect > 2.0) continue;
+            }
             
             // Left edges should be roughly aligned (TL.x ≈ BL.x)
             const leftXDiff = Math.abs(tl.x - bl.x) / avgW;
@@ -1246,6 +1283,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             
             // Score: product of individual marker scores × rectangle quality
             const rectQuality = wRatio * hRatio;
+            
+            // For 100-item templates, add aspect ratio bonus - prefer rectangles closer to expected 0.91
+            let aspectBonus = 1.0;
+            if (templateType === 100) {
+              // Target aspect is 0.91, penalize deviation
+              const expectedAspect = 0.91;
+              const aspectDiff = Math.abs(aspect - expectedAspect);
+              aspectBonus = Math.max(0.5, 1.0 - aspectDiff); // Penalty increases with distance from 0.91
+            }
             
             // For 100-item templates, check if bottom markers are at approximately
             // the right position (should be around 70-80% down from top markers if paper fills most of frame)
@@ -1282,9 +1328,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               }
             }
             
-            // Prefer larger rectangles but with position bonus for 100-item
+            // Prefer larger rectangles but with position bonus and aspect bonus for 100-item
             const areaBonus = avgW * avgH / (width * height);
-            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus * positionBonus;
+            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus * positionBonus * aspectBonus;
             
             if (totalScore > bestRectScore) {
               bestRectScore = totalScore;
