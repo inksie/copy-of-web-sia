@@ -68,6 +68,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
   const [debugInfo, setDebugInfo] = useState<string>('');
   const [markersDetected, setMarkersDetected] = useState(false);
+  const [alignmentError, setAlignmentError] = useState<string | null>(null);
 
   // Keep streamRef in sync with stream state
   useEffect(() => {
@@ -346,16 +347,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
     
     // Define search regions for each corner.
+    // For rotated sheets (up to ~30°), markers may shift from their expected positions.
+    // Expand search regions to accommodate rotation.
     // For 100-item: bottom markers are at ~75% of page height, not at the page bottom.
     // The guide frame crops the full page, so bottom markers are at ~75% of frame height.
     const t = getTemplateType();
-    const margin = Math.round(dw * 0.20); // 20% of width for horizontal search
-    const topH = Math.round(dh * 0.20);   // top 20% for top markers
+    // Increase margin for rotated sheets - markers can shift horizontally
+    const margin = Math.round(dw * 0.30); // 30% of width for horizontal search (increased from 20%)
+    const topH = Math.round(dh * 0.30);   // top 30% for top markers (increased from 20%)
     
     // Bottom markers: for 100-item, they're at ~75% down (markers at Y=222 on 297mm page)
-    // Search from 55% to 85% of frame height for 100-item, bottom 30% for others
-    const botY1 = t === 100 ? Math.round(dh * 0.55) : Math.round(dh * 0.70);
-    const botY2 = t === 100 ? Math.round(dh * 0.90) : dh;
+    // Search from 50% to 95% of frame height for 100-item, bottom 40% for others
+    const botY1 = t === 100 ? Math.round(dh * 0.50) : Math.round(dh * 0.60);
+    const botY2 = t === 100 ? Math.round(dh * 0.95) : dh;
     
     const cornerRegions = [
       { name: 'TL', x1: 0, y1: 0, x2: margin, y2: topH },
@@ -458,6 +462,167 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
+  // ─── SKEW DETECTION AND CORRECTION ───
+  // Detects rotation angle up to ±30° and corrects it using Hough-like line detection
+  // on the edges of the paper/markers.
+  const detectSkewAngle = (grayscale: Uint8Array, width: number, height: number): number => {
+    // Use Sobel edge detection to find strong horizontal/vertical edges
+    // Then accumulate angles in a histogram to find dominant angle
+    
+    const angleHist = new Float32Array(121); // -30 to +30 degrees in 0.5° steps
+    const centerAngle = 60; // Index 60 = 0 degrees
+    
+    // Sample a grid of points and measure local edge direction
+    const step = Math.max(4, Math.floor(Math.min(width, height) / 100));
+    
+    for (let y = step; y < height - step; y += step) {
+      for (let x = step; x < width - step; x += step) {
+        // Sobel gradients
+        const gx = 
+          -grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[y * width + (x - 1)] - grayscale[(y + 1) * width + (x - 1)] +
+          grayscale[(y - 1) * width + (x + 1)] + 2 * grayscale[y * width + (x + 1)] + grayscale[(y + 1) * width + (x + 1)];
+        
+        const gy = 
+          -grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[(y - 1) * width + x] - grayscale[(y - 1) * width + (x + 1)] +
+          grayscale[(y + 1) * width + (x - 1)] + 2 * grayscale[(y + 1) * width + x] + grayscale[(y + 1) * width + (x + 1)];
+        
+        const magnitude = Math.sqrt(gx * gx + gy * gy);
+        
+        // Only consider strong edges
+        if (magnitude < 50) continue;
+        
+        // Calculate angle in degrees (-90 to +90)
+        let angle = Math.atan2(gy, gx) * 180 / Math.PI;
+        
+        // We're interested in angles close to 0 (horizontal) or 90 (vertical)
+        // which correspond to paper edges. Normalize to -30 to +30 range.
+        // Horizontal edges: angle ≈ 90 or -90 → paper rotation
+        // Vertical edges: angle ≈ 0 or 180 → paper rotation
+        
+        // For horizontal edges (gy dominant): rotation = angle - 90 (or + 90)
+        // For vertical edges (gx dominant): rotation = angle
+        
+        let rotation: number;
+        if (Math.abs(gx) > Math.abs(gy)) {
+          // Vertical edge - angle should be near 0 or ±180
+          rotation = angle;
+          if (rotation > 90) rotation -= 180;
+          if (rotation < -90) rotation += 180;
+        } else {
+          // Horizontal edge - angle should be near ±90
+          rotation = angle > 0 ? angle - 90 : angle + 90;
+        }
+        
+        // Clamp to ±30° range
+        if (rotation < -30 || rotation > 30) continue;
+        
+        // Add to histogram with weighted magnitude
+        const histIdx = Math.round((rotation + 30) * 2); // -30 → 0, 0 → 60, +30 → 120
+        if (histIdx >= 0 && histIdx < 121) {
+          angleHist[histIdx] += magnitude;
+        }
+      }
+    }
+    
+    // Find the peak in the histogram (with smoothing)
+    let maxVal = 0;
+    let maxIdx = centerAngle;
+    
+    for (let i = 2; i < 119; i++) {
+      // Gaussian smoothing kernel
+      const smoothed = angleHist[i - 2] * 0.1 + angleHist[i - 1] * 0.2 + 
+                       angleHist[i] * 0.4 + angleHist[i + 1] * 0.2 + angleHist[i + 2] * 0.1;
+      if (smoothed > maxVal) {
+        maxVal = smoothed;
+        maxIdx = i;
+      }
+    }
+    
+    const detectedAngle = (maxIdx - centerAngle) / 2; // Convert back to degrees
+    
+    // Only return angle if there's significant evidence
+    const totalVotes = angleHist.reduce((a, b) => a + b, 0);
+    const peakStrength = maxVal / (totalVotes || 1);
+    
+    console.log(`[Skew] Detected angle: ${detectedAngle.toFixed(1)}° (peak strength: ${(peakStrength * 100).toFixed(1)}%)`);
+    
+    // If peak is weak, don't rotate
+    if (peakStrength < 0.05) {
+      return 0;
+    }
+    
+    // If angle is very small (< 1°), skip rotation
+    if (Math.abs(detectedAngle) < 1) {
+      return 0;
+    }
+    
+    return detectedAngle;
+  };
+
+  // Rotate canvas by the given angle (in degrees)
+  const rotateCanvas = (srcCanvas: HTMLCanvasElement, angle: number): HTMLCanvasElement => {
+    if (Math.abs(angle) < 0.5) return srcCanvas;
+    
+    const ctx = srcCanvas.getContext('2d');
+    if (!ctx) return srcCanvas;
+    
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    const rad = angle * Math.PI / 180;
+    
+    // Calculate new canvas size to fit rotated image
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+    const newW = Math.ceil(w * cos + h * sin);
+    const newH = Math.ceil(w * sin + h * cos);
+    
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = newW;
+    outCanvas.height = newH;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return srcCanvas;
+    
+    // Fill with white (paper color) to avoid black edges
+    outCtx.fillStyle = '#FFFFFF';
+    outCtx.fillRect(0, 0, newW, newH);
+    
+    // Translate to center, rotate, then draw
+    outCtx.translate(newW / 2, newH / 2);
+    outCtx.rotate(-rad); // Negative to correct the skew
+    outCtx.drawImage(srcCanvas, -w / 2, -h / 2);
+    
+    console.log(`[Skew] Rotated image by ${(-angle).toFixed(1)}° (${w}x${h} → ${newW}x${newH})`);
+    
+    return outCanvas;
+  };
+
+  // Apply skew correction to an image
+  const correctSkew = (srcCanvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const ctx = srcCanvas.getContext('2d');
+    if (!ctx) return srcCanvas;
+    
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    
+    // Convert to grayscale for skew detection
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const grayscale = new Uint8Array(w * h);
+    for (let i = 0; i < imgData.data.length; i += 4) {
+      grayscale[i / 4] = Math.round(
+        0.299 * imgData.data[i] + 0.587 * imgData.data[i + 1] + 0.114 * imgData.data[i + 2]
+      );
+    }
+    
+    const angle = detectSkewAngle(grayscale, w, h);
+    
+    if (Math.abs(angle) < 1) {
+      console.log('[Skew] No significant skew detected');
+      return srcCanvas;
+    }
+    
+    return rotateCanvas(srcCanvas, angle);
+  };
+
   // ─── IMAGE ENHANCEMENT: Adaptive brightness (no perspective warp) ───
   // Normalizes lighting across the image to handle shadows and uneven illumination.
   // Does NOT warp or distort the image — perspective correction is handled by
@@ -544,6 +709,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     setProcessing(true);
     setMode('processing');
+    setAlignmentError(null); // Reset alignment error
     
     try {
       // Create an image element
@@ -565,10 +731,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
       
-      // Apply adaptive brightness enhancement (handles shadows / uneven lighting)
-      // No perspective warp — the 4-corner marker system handles skew implicitly
+      // Step 1: Apply skew correction (handles rotated sheets up to ±30°)
+      console.log('[Preprocess] Starting skew correction...');
+      const deskewedCanvas = correctSkew(canvas);
+      
+      // Step 2: Apply adaptive brightness enhancement (handles shadows / uneven lighting)
       console.log('[Enhance] Starting image enhancement...');
-      const enhancedCanvas = enhanceImage(canvas);
+      const enhancedCanvas = enhanceImage(deskewedCanvas);
       
       // Update the displayed image with the enhanced version
       setCapturedImage(enhancedCanvas.toDataURL('image/png'));
@@ -581,7 +750,25 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log(`[OMR] Processing enhanced image: ${imageData.width}x${imageData.height}`);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades, debugMarkers } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades, debugMarkers, markersFound, markerConfidence } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      
+      // Check for alignment issues based on marker detection quality
+      if (!markersFound || markerConfidence < 0.5) {
+        // Marker detection failed or is unreliable
+        const missingMarkers = !markersFound;
+        const lowConfidence = markerConfidence < 0.5;
+        
+        let alignmentMsg = 'Sheet alignment error. ';
+        if (missingMarkers) {
+          alignmentMsg += 'Could not detect all 4 corner markers. ';
+        } else if (lowConfidence) {
+          alignmentMsg += 'Corner markers were partially obscured or unclear. ';
+        }
+        alignmentMsg += 'Please ensure the answer sheet is flat, well-lit, and all 4 corner markers are visible. Retake the photo.';
+        
+        setAlignmentError(alignmentMsg);
+        console.log(`[OMR] Alignment error: markersFound=${markersFound} confidence=${markerConfidence?.toFixed(2)}`);
+      }
       
       // Build debug info string for UI display
       const dbgLines: string[] = [];
@@ -594,6 +781,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const fw = Math.round(debugMarkers.topRight.x - debugMarkers.topLeft.x);
         const fh2 = Math.round(debugMarkers.bottomLeft.y - debugMarkers.topLeft.y);
         dbgLines.push(`Frame: ${fw}×${fh2}`);
+        if (markerConfidence !== undefined) {
+          dbgLines.push(`Conf: ${(markerConfidence * 100).toFixed(0)}%`);
+        }
         // Show first ID bubble pixel position for verification
         const layout = getTemplateLayout(exam.num_items);
         const firstIdPx = mapToPixel(debugMarkers, layout.id.firstColNX, layout.id.firstRowNY);
@@ -706,13 +896,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       setIdDoubleShadeColumns(idDoubleShades);
       
       // Validate student ID against class roster
+      // Consider alignment errors when classifying ID detection issues
       let idError: string | null = null;
       let matched: Student | null = null;
       
+      // If there's an alignment error and ID detection issues, prioritize the alignment message
+      const hasAlignmentIssue = !markersFound || markerConfidence < 0.5;
+      
       if (idDoubleShades.length > 0) {
-        idError = `Student ID has multiple bubbles shaded in column(s): ${idDoubleShades.join(', ')}. Each column must have only one bubble shaded. Please ask the student to correct their answer sheet or manually edit the ID below.`;
+        // Check if this might be caused by alignment issues
+        if (hasAlignmentIssue) {
+          // Don't set idError - let alignment error take precedence
+          // The alignment error message is more helpful
+        } else {
+          idError = `Student ID has multiple bubbles shaded in column(s): ${idDoubleShades.join(', ')}. Each column must have only one bubble shaded. Please ask the student to correct their answer sheet or manually edit the ID below.`;
+        }
       } else if (!studentId || /^0+$/.test(studentId)) {
-        idError = 'No Student ID was detected. Please check if the student properly shaded their ID bubbles.';
+        if (hasAlignmentIssue) {
+          // Alignment issue is likely the cause - don't duplicate the message
+        } else {
+          idError = 'No Student ID was detected. Please check if the student properly shaded their ID bubbles.';
+        }
       } else if (!classData) {
         idError = 'No class is linked to this exam. Please go to exam settings and assign a class before scanning.';
       } else {
@@ -720,7 +924,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (student) {
           matched = student;
         } else {
-          idError = `Student ID "${studentId}" is not registered in class "${classData.class_name} - ${classData.section_block}". Please verify the student is enrolled in this class or check if the ID was shaded correctly.`;
+          // If alignment is poor but ID was detected, warn that the ID might be misread
+          if (hasAlignmentIssue) {
+            idError = `Student ID "${studentId}" may have been misread due to alignment issues. The ID is not registered in class "${classData.class_name} - ${classData.section_block}". Try retaking the photo with better alignment.`;
+          } else {
+            idError = `Student ID "${studentId}" is not registered in class "${classData.class_name} - ${classData.section_block}". Please verify the student is enrolled in this class or check if the ID was shaded correctly.`;
+          }
         }
       }
       
@@ -790,6 +999,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     grayscale?: Uint8Array
   ): {
     found: boolean;
+    confidence: number;
     topLeft: { x: number; y: number };
     topRight: { x: number; y: number };
     bottomLeft: { x: number; y: number };
@@ -798,6 +1008,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!grayscale) {
       return {
         found: false,
+        confidence: 0,
         topLeft: { x: width * 0.05, y: height * 0.05 },
         topRight: { x: width * 0.95, y: height * 0.05 },
         bottomLeft: { x: width * 0.05, y: height * 0.95 },
@@ -940,6 +1151,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log('[OMR] Not enough candidates, using fallback positions');
       return {
         found: false,
+        confidence: merged.length / 4, // 0-0.75 if some markers found
         topLeft: { x: width * 0.1, y: height * 0.05 },
         topRight: { x: width * 0.9, y: height * 0.05 },
         bottomLeft: { x: width * 0.1, y: height * 0.85 },
@@ -1051,8 +1263,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
       console.log(`[OMR] Selected rectangle: TL=(${Math.round(tl.x)},${Math.round(tl.y)}) TR=(${Math.round(tr.x)},${Math.round(tr.y)}) BL=(${Math.round(bl.x)},${Math.round(bl.y)}) BR=(${Math.round(br.x)},${Math.round(br.y)}) rectScore=${bestRectScore.toFixed(0)}`);
 
+      // Calculate confidence based on rectangle quality and individual marker scores
+      // Normalize score: typical good score is 5000-20000, max out at ~1.0
+      const avgMarkerScore = (bestCombo.tl.score + bestCombo.tr.score + bestCombo.bl.score + bestCombo.br.score) / 4;
+      const normalizedMarkerScore = Math.min(1, avgMarkerScore / 200);
+      
+      // Check rectangle quality metrics
+      const topW = tr.x - tl.x;
+      const botW = br.x - bl.x;
+      const leftH = bl.y - tl.y;
+      const rightH = br.y - tr.y;
+      const wRatio = Math.min(topW, botW) / Math.max(topW, botW);
+      const hRatio = Math.min(leftH, rightH) / Math.max(leftH, rightH);
+      const rectQuality = wRatio * hRatio;
+      
+      const confidence = Math.min(1, normalizedMarkerScore * rectQuality * 1.2);
+      console.log(`[OMR] Marker confidence: ${(confidence * 100).toFixed(1)}% (markerScore=${avgMarkerScore.toFixed(0)}, rectQuality=${rectQuality.toFixed(2)})`);
+
       return {
         found: true,
+        confidence,
         topLeft: tl,
         topRight: tr,
         bottomLeft: bl,
@@ -1077,6 +1307,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     return {
       found: false,
+      confidence: 0.3, // Low confidence for fallback
       topLeft: pickClosest(0, 0),
       topRight: pickClosest(width, 0),
       bottomLeft: pickClosest(0, height),
@@ -1348,6 +1579,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     answers: string[];
     multipleAnswers: number[];
     idDoubleShades: number[];
+    markersFound: boolean;
+    markerConfidence: number;
     debugMarkers?: {
       topLeft: { x: number; y: number };
       topRight: { x: number; y: number };
@@ -1419,7 +1652,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       grayscale, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
 
-    return { studentId, answers, multipleAnswers, idDoubleShades: doubleShadeColumns, debugMarkers: effectiveMarkers };
+    return { 
+      studentId, 
+      answers, 
+      multipleAnswers, 
+      idDoubleShades: doubleShadeColumns, 
+      markersFound: markers.found,
+      markerConfidence: noMarkersAtAll ? 0 : markers.confidence,
+      debugMarkers: effectiveMarkers 
+    };
   };
 
   // ─── BUBBLE SAMPLING (grayscale-based) ───
@@ -1741,6 +1982,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         setStudentIdError(null);
         setMultipleAnswerQuestions([]);
         setIdDoubleShadeColumns([]);
+        setAlignmentError(null);
         setCapturedImage(null);
         isAutoCapturingRef.current = false;
         setMode('camera');
@@ -1958,6 +2200,45 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   alt="Debug overlay"
                   className="w-full max-h-[50vh] object-contain mx-auto"
                 />
+              </div>
+            </Card>
+          )}
+
+          {/* Sheet Alignment Error - CRITICAL */}
+          {alignmentError && (
+            <Card className="p-4 border-red-400 bg-red-100">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-6 h-6 text-red-700 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-bold text-red-900">Sheet Alignment Error</h4>
+                  <p className="text-sm text-red-800 mt-1">{alignmentError}</p>
+                  <div className="mt-3 flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      className="border-red-400 text-red-700 hover:bg-red-200"
+                      onClick={() => {
+                        setScanResult(null);
+                        setDetectedAnswers([]);
+                        setDetectedStudentId('');
+                        setMatchedStudent(null);
+                        setStudentIdError(null);
+                        setMultipleAnswerQuestions([]);
+                        setIdDoubleShadeColumns([]);
+                        setCapturedImage(null);
+                        setAlignmentError(null);
+                        isAutoCapturingRef.current = false;
+                        setMode('camera');
+                        startCamera();
+                      }}
+                    >
+                      Retake Photo
+                    </Button>
+                  </div>
+                  <p className="text-xs text-red-600 mt-3">
+                    <strong>Tips:</strong> Ensure all 4 black corner markers are visible • Hold the camera steady • Avoid shadows on the paper • Keep the sheet flat
+                  </p>
+                </div>
               </div>
             </Card>
           )}
@@ -2210,6 +2491,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               setStudentIdError(null);
               setMultipleAnswerQuestions([]);
               setIdDoubleShadeColumns([]);
+              setAlignmentError(null);
               setCapturedImage(null);
               isAutoCapturingRef.current = false;
               setMode('camera');
