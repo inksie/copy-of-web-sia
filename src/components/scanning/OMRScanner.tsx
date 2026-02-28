@@ -67,6 +67,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [studentIdError, setStudentIdError] = useState<string | null>(null);
   const [multipleAnswerQuestions, setMultipleAnswerQuestions] = useState<number[]>([]);
   const [idDoubleShadeColumns, setIdDoubleShadeColumns] = useState<number[]>([]);
+  const [rawIdDigits, setRawIdDigits] = useState<number[]>([]); // Raw digit array (-1 = unshaded)
   const [debugInfo, setDebugInfo] = useState<string>('');
   const [markersDetected, setMarkersDetected] = useState(false);
   const [stabilizationProgress, setStabilizationProgress] = useState(0); // 0-100%
@@ -771,7 +772,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log(`[OMR] Processing enhanced image: ${imageData.width}x${imageData.height}`);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades, debugMarkers, markersFound, markerConfidence } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades, rawIdDigits: detectedRawIdDigits, debugMarkers, markersFound, markerConfidence } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
       
       // Check for alignment issues based on marker detection quality
       if (!markersFound || markerConfidence < 0.5) {
@@ -915,6 +916,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       setDetectedAnswers(answers);
       setMultipleAnswerQuestions(multipleAnswers);
       setIdDoubleShadeColumns(idDoubleShades);
+      setRawIdDigits(detectedRawIdDigits || []); // Store raw digit array for UI display
       
       // Validate student ID against class roster
       // Consider alignment errors when classifying ID detection issues
@@ -1648,6 +1650,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     answers: string[];
     multipleAnswers: number[];
     idDoubleShades: number[];
+    rawIdDigits: number[]; // Array of detected digits per column (-1 = unshaded)
     markersFound: boolean;
     markerConfidence: number;
     debugMarkers?: {
@@ -1720,7 +1723,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const layout = getTemplateLayout(numQuestions);
 
     // 5. Detect student ID and answers using GRAYSCALE for bubble sampling
-    const { studentId, doubleShadeColumns } = detectStudentIdFromImage(grayscale, width, height, effectiveMarkers, layout);
+    const { studentId, doubleShadeColumns, rawIdDigits } = detectStudentIdFromImage(grayscale, width, height, effectiveMarkers, layout);
     const { answers, multipleAnswers } = detectAnswersFromImage(
       grayscale, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
@@ -1729,7 +1732,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       studentId, 
       answers, 
       multipleAnswers, 
-      idDoubleShades: doubleShadeColumns, 
+      idDoubleShades: doubleShadeColumns,
+      rawIdDigits, // Include raw digit array for UI display
       markersFound: markers.found,
       markerConfidence: noMarkersAtAll ? 0 : markers.confidence,
       debugMarkers: effectiveMarkers 
@@ -1805,7 +1809,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       bottomRight: { x: number; y: number };
     },
     layout: TemplateLayout
-  ): { studentId: string; doubleShadeColumns: number[] } => {
+  ): { studentId: string; doubleShadeColumns: number[]; rawIdDigits: number[] } => {
     const { id } = layout;
     const idDigits: number[] = [];
     const doubleShadeColumns: number[] = [];
@@ -1903,7 +1907,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     console.log('[ID] Raw with placeholders:', rawWithPlaceholders);
     console.log('[ID] Clean ID:', cleanId, cleanId.length, 'digits', doubleShadeColumns.length > 0 ? `(double-shade: cols ${doubleShadeColumns.join(',')})` : '');
     
-    return { studentId: cleanId, doubleShadeColumns };
+    // Return both the clean ID and the raw digit array for UI display
+    return { studentId: cleanId, doubleShadeColumns, rawIdDigits: idDigits };
   };
 
   // ─── DETECT ANSWERS ───
@@ -2440,6 +2445,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                         setDetectedStudentId(newId);
                         // Clear double-shade error when user manually edits
                         setIdDoubleShadeColumns([]);
+                        setRawIdDigits([]); // Clear raw digits when manually editing
                         // Re-validate student ID on change
                         if (!newId || /^0+$/.test(newId)) {
                           setStudentIdError('No Student ID provided. Please enter a valid Student ID.');
@@ -2471,7 +2477,46 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                       </span>
                     )}
                   </div>
-                  <p className="text-gray-600">Student ID</p>
+                  {/* Student ID Digit Boxes - Visual display of each scanned column */}
+                  {rawIdDigits.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs text-gray-500 mb-1">Scanned ID Columns (10 digits):</p>
+                      <div className="flex gap-1">
+                        {rawIdDigits.map((digit, idx) => {
+                          const isUnshaded = digit === -1;
+                          const hasDoubleShade = idDoubleShadeColumns.includes(idx + 1);
+                          return (
+                            <div
+                              key={idx}
+                              className={`w-7 h-8 flex items-center justify-center text-sm font-bold rounded border-2 ${
+                                hasDoubleShade
+                                  ? 'border-yellow-500 bg-yellow-100 text-yellow-700'
+                                  : isUnshaded
+                                    ? 'border-gray-300 bg-gray-200 text-gray-400'
+                                    : 'border-green-500 bg-green-50 text-green-700'
+                              }`}
+                              title={
+                                hasDoubleShade
+                                  ? `Column ${idx + 1}: Multiple bubbles shaded`
+                                  : isUnshaded
+                                    ? `Column ${idx + 1}: No bubble shaded`
+                                    : `Column ${idx + 1}: Digit ${digit}`
+                              }
+                            >
+                              {hasDoubleShade ? '?' : isUnshaded ? '–' : digit}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {rawIdDigits.some(d => d === -1) && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          <span className="inline-block w-3 h-3 bg-gray-200 border border-gray-300 rounded mr-1 align-middle"></span>
+                          Grey boxes = no bubble shaded in that column
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-gray-600 mt-1">Student ID</p>
                   {debugInfo && (
                     <p className="text-xs text-gray-400 mt-1 font-mono break-all">{debugInfo}</p>
                   )}
@@ -2591,14 +2636,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-red-100 border-2 border-red-500 rounded" />
-                <span className="text-gray-600">Incorrect (correct answer shown below)</span>
+                <span className="text-gray-600">Incorrect</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-gray-100 border-2 border-gray-300 rounded" />
+                <span className="text-gray-600">No answer detected</span>
               </div>
               {multipleAnswerQuestions.length > 0 && (
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-500 rounded relative">
                     <AlertTriangle className="absolute -top-1 -right-1 w-3 h-3 text-yellow-600" />
                   </div>
-                  <span className="text-yellow-700">Multiple answers detected</span>
+                  <span className="text-yellow-700">Multiple answers</span>
                 </div>
               )}
             </div>
@@ -2613,6 +2662,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               setStudentIdError(null);
               setMultipleAnswerQuestions([]);
               setIdDoubleShadeColumns([]);
+              setRawIdDigits([]); // Clear raw ID digit display
               setAlignmentError(null);
               setCapturedImage(null);
               isAutoCapturingRef.current = false;
