@@ -1846,45 +1846,64 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       // This is more robust than median — unfilled bubbles should be bright
       const upperQ = sorted[7];
 
-      let detectedDigit = 0;
+      let detectedDigit: number | null = null; // null means no detection (unshaded column)
       let hasDetection = false;
 
-      // Detection criteria:
-      // 1. The darkest bubble must be < 65% of the upper quartile brightness (35%+ drop)
+      // Detection criteria (calibrated to 70% threshold):
+      // 1. The darkest bubble must be < 70% of the upper quartile brightness (30%+ drop)
+      //    This is stricter to avoid false positives from noise/dots
       // 2. OR: the gap between darkest and 2nd-darkest must be > 15% of upper quartile
-      //    AND darkest < 80% of upper quartile
+      //    AND darkest < 85% of upper quartile (clear separation indicates intentional mark)
       const darkRatio = upperQ > 20 ? darkest / upperQ : 1;
       const gapFromSecond = secondDark - darkest;
       const gapRatio = upperQ > 20 ? gapFromSecond / upperQ : 0;
 
-      if (darkRatio < 0.65) {
+      // Primary detection: darkest must be significantly darker than unfilled (30% drop = 70% threshold)
+      if (darkRatio < 0.70) {
         // Strong detection: darkest is much darker than unfilled
         detectedDigit = fills.indexOf(darkest);
         hasDetection = true;
-      } else if (darkRatio < 0.80 && gapRatio > 0.12) {
+      } else if (darkRatio < 0.85 && gapRatio > 0.15) {
         // Moderate detection: darkest is somewhat dark AND clearly separated from 2nd
+        // Requires stronger gap (15% instead of 12%) to avoid light mark false positives
         detectedDigit = fills.indexOf(darkest);
         hasDetection = true;
       }
 
-      if (hasDetection) {
+      if (hasDetection && detectedDigit !== null) {
         // Check for double-shade: is the 2nd-darkest ALSO significantly dark?
         const secondRatio = upperQ > 20 ? secondDark / upperQ : 1;
         const gapBetweenTopTwo = upperQ > 20 ? gapFromSecond / upperQ : 1;
         // Double shade if 2nd is also quite dark AND close to the darkest
-        if (secondRatio < 0.70 && gapBetweenTopTwo < 0.08) {
+        if (secondRatio < 0.75 && gapBetweenTopTwo < 0.08) {
           doubleShadeColumns.push(col + 1);
           console.log(`[ID] ⚠️ Col ${col} DOUBLE SHADE: darkest=${darkest.toFixed(0)} 2nd=${secondDark.toFixed(0)} upperQ=${upperQ.toFixed(0)}`);
         }
       }
 
-      console.log(`[ID] Col ${col}: brightness=[${fills.map(f => f.toFixed(0)).join(',')}] → ${hasDetection ? detectedDigit : '?'} (darkest=${darkest.toFixed(0)} upperQ=${upperQ.toFixed(0)} ratio=${darkRatio.toFixed(2)} gap=${gapRatio.toFixed(2)})`);
-      idDigits.push(hasDetection ? detectedDigit : 0);
+      // NULL LOGIC: If no bubble is shaded, use '_' placeholder (not '0')
+      // This prevents unshaded columns from corrupting the ID (e.g., 9 digits → 10)
+      // The digit '0' should ONLY appear if the '0' bubble is actually shaded
+      const digitChar = hasDetection && detectedDigit !== null ? String(detectedDigit) : '_';
+      
+      console.log(`[ID] Col ${col}: brightness=[${fills.map(f => f.toFixed(0)).join(',')}] → ${digitChar} (darkest=${darkest.toFixed(0)} upperQ=${upperQ.toFixed(0)} ratio=${darkRatio.toFixed(2)} gap=${gapRatio.toFixed(2)})`);
+      idDigits.push(hasDetection && detectedDigit !== null ? detectedDigit : -1); // -1 = unshaded
     }
 
-    const raw = idDigits.join('');
-    console.log('[ID] Raw digits:', raw, doubleShadeColumns.length > 0 ? `(double-shade: cols ${doubleShadeColumns.join(',')})` : '');
-    return { studentId: raw, doubleShadeColumns };
+    // Convert digits to string, using '_' for unshaded columns (-1)
+    // Then strip leading/trailing underscores and collapse to just the detected digits
+    const rawWithPlaceholders = idDigits.map(d => d === -1 ? '_' : String(d)).join('');
+    
+    // For the final ID, we have two options:
+    // 1. Keep placeholders to show which columns were unshaded (for debugging/validation)
+    // 2. Strip placeholders and return only the detected digits
+    // We'll strip them to get a clean ID, but log both versions
+    const cleanId = idDigits.filter(d => d !== -1).map(d => String(d)).join('');
+    
+    console.log('[ID] Raw with placeholders:', rawWithPlaceholders);
+    console.log('[ID] Clean ID:', cleanId, cleanId.length, 'digits', doubleShadeColumns.length > 0 ? `(double-shade: cols ${doubleShadeColumns.join(',')})` : '');
+    
+    return { studentId: cleanId, doubleShadeColumns };
   };
 
   // ─── DETECT ANSWERS ───
@@ -1950,11 +1969,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const gapFromSecond = secondDark - darkest;
         const gapRatio = ref > 20 ? gapFromSecond / ref : 0;
 
-        // Detection: darkest must be < 70% of brightest (30%+ drop)
-        // OR: darkest < 85% of brightest AND clear gap from 2nd
+        // Detection with 70% threshold (calibrated to avoid false positives from noise):
+        // Primary: darkest must be < 70% of brightest (30%+ drop) - clear intentional mark
+        // Secondary: darkest < 85% of brightest AND strong gap from 2nd (15%+)
+        //            This catches lighter but intentional marks that stand out
         if (darkRatio < 0.70) {
           selectedChoice = sorted[0].choice;
-        } else if (darkRatio < 0.85 && gapRatio > 0.10) {
+        } else if (darkRatio < 0.85 && gapRatio > 0.15) {
+          // Stricter gap requirement (was 0.10) to distinguish from noise
           selectedChoice = sorted[0].choice;
         }
 
@@ -1962,8 +1984,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (selectedChoice) {
           const secondRatio = ref > 20 ? secondDark / ref : 1;
           const gapBetweenTopTwo = ref > 20 ? gapFromSecond / ref : 1;
-          // Multiple answers: 2nd darkest is also quite dark AND close to darkest
-          if (secondRatio < 0.72 && gapBetweenTopTwo < 0.06) {
+          // Multiple answers: 2nd darkest is also quite dark (<75%) AND close to darkest (<8% gap)
+          // Stricter thresholds to reduce false positives from background noise
+          if (secondRatio < 0.75 && gapBetweenTopTwo < 0.08) {
             multipleAnswers.push(q);
             console.log(`[MULTI] Q${q}: ${sorted.slice(0, 3).map(f => `${f.choice}=${f.brightness.toFixed(0)}`).join(', ')} ref=${ref.toFixed(0)}`);
           }

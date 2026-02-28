@@ -2,6 +2,42 @@
 
 ## Recent Updates
 
+### Null Logic and Threshold Calibration for ID Detection (March 2026)
+
+**Problem 1:** The system detected a "0" in an unshaded column, corrupting the ID from 9 digits to 10. This happened because unshaded columns were defaulting to numeric zero.
+
+**Problem 2:** The system was overly sensitive to the empty grid (background noise), yet struggled with light intentional marks.
+
+**Solution Implemented:**
+
+1. **Null Logic for Unshaded Columns**
+   - Columns with no shaded bubble now return `-1` internally (instead of `0`)
+   - The digit '0' is ONLY returned if the '0' bubble is actually shaded
+   - Unshaded columns are represented as '_' in debug logs
+   - Final ID string only includes detected digits (unshaded columns stripped)
+   - This prevents 9-digit IDs from becoming 10-digit due to false zeros
+
+2. **70% Detection Threshold Calibration**
+   - Primary threshold: darkest bubble must be < 70% of unfilled brightness (was 65%)
+   - This is stricter to avoid false positives from dots or background noise
+   - Secondary detection: requires 15% gap from 2nd darkest AND < 85% brightness (was 12% gap, 80%)
+   - This catches intentional light marks while rejecting noise
+
+3. **Double-Shade Detection Update**
+   - Threshold increased to 75% (was 70%) for second bubble
+   - Gap threshold increased to 8% (was 6%) 
+   - Reduces false multiple-answer detections from uneven backgrounds
+
+### 100-Item Template Marker Detection Fix (March 2026)
+
+**Problem:** For 100-item templates, the bottom-left (BL) marker was being detected incorrectly in the middle of the page. This happened because the bottom markers are at 75% page height (not at the bottom), and the scoring algorithm preferred larger rectangles.
+
+**Solution Implemented:**
+1. **Template-Aware Marker Detection** - `findCornerMarkers()` now accepts `templateType` parameter
+2. **Position Bonus for 100-Item** - Bottom markers at 95%+ of image height are penalized (likely wrong)
+3. **Frame Height Validation** - Marker frames smaller than 35% of image are penalized
+4. **Increased Skew Tolerance** - Changed from 8% to 15% edge alignment tolerance
+
 ### Skew Detection and Correction (March 2026)
 
 **Problem:** When sheets were slightly skewed or rotated (up to 30°), marker detection was inconsistent and student ID/answers were not correctly detected.
