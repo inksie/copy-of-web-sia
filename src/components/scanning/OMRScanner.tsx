@@ -1930,27 +1930,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         if (secondRatio < 0.75 && gapBetweenTopTwo < 0.08) {
           doubleShadeColumns.push(col + 1);
           console.log(`[ID] ⚠️ Col ${col} DOUBLE SHADE: darkest=${darkest.toFixed(0)} 2nd=${secondDark.toFixed(0)} upperQ=${upperQ.toFixed(0)}`);
+          // Mark as double-shade (-2) so it is excluded from cleanId and shown as '?' in UI
+          idDigits.push(-2);
+          continue;
         }
       }
 
-      // NULL LOGIC: If no bubble is shaded, use '_' placeholder (not '0')
+      // NULL LOGIC: If no bubble is shaded, use -1 placeholder (not '0')
       // This prevents unshaded columns from corrupting the ID (e.g., 9 digits → 10)
       // The digit '0' should ONLY appear if the '0' bubble is actually shaded
       const digitChar = hasDetection && detectedDigit !== null ? String(detectedDigit) : '_';
       
       console.log(`[ID] Col ${col}: brightness=[${fills.map(f => f.toFixed(0)).join(',')}] → ${digitChar} (darkest=${darkest.toFixed(0)} upperQ=${upperQ.toFixed(0)} ratio=${darkRatio.toFixed(2)} gap=${gapRatio.toFixed(2)})`);
-      idDigits.push(hasDetection && detectedDigit !== null ? detectedDigit : -1); // -1 = unshaded
+      idDigits.push(hasDetection && detectedDigit !== null ? detectedDigit : -1); // -1 = unshaded, -2 = double-shade
     }
 
-    // Convert digits to string, using '_' for unshaded columns (-1)
-    // Then strip leading/trailing underscores and collapse to just the detected digits
-    const rawWithPlaceholders = idDigits.map(d => d === -1 ? '_' : String(d)).join('');
+    // Convert digits to string, using '_' for unshaded (-1) and '?' for double-shade (-2)
+    // Then strip placeholders and return only the cleanly detected digits
+    const rawWithPlaceholders = idDigits.map(d => d === -1 ? '_' : d === -2 ? '?' : String(d)).join('');
     
-    // For the final ID, we have two options:
-    // 1. Keep placeholders to show which columns were unshaded (for debugging/validation)
-    // 2. Strip placeholders and return only the detected digits
-    // We'll strip them to get a clean ID, but log both versions
-    const cleanId = idDigits.filter(d => d !== -1).map(d => String(d)).join('');
+    // For the final ID, exclude both unshaded (-1) and double-shaded (-2) columns
+    const cleanId = idDigits.filter(d => d >= 0).map(d => String(d)).join('');
     
     console.log('[ID] Raw with placeholders:', rawWithPlaceholders);
     console.log('[ID] Clean ID:', cleanId, cleanId.length, 'digits', doubleShadeColumns.length > 0 ? `(double-shade: cols ${doubleShadeColumns.join(',')})` : '');
@@ -2532,7 +2532,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                       <div className="flex gap-1">
                         {rawIdDigits.map((digit, idx) => {
                           const isUnshaded = digit === -1;
-                          const hasDoubleShade = idDoubleShadeColumns.includes(idx + 1);
+                          const hasDoubleShade = digit === -2;
                           return (
                             <div
                               key={idx}
