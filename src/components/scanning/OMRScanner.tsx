@@ -575,19 +575,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (mode !== 'camera' || !stream || !exam) return;
     
     const templateType = getTemplateType();
-    const isManualCapture = templateType === 100; // 100-item uses manual capture button
     
     let frameCount = 0;
     let consecutiveDetections = 0;
-    // Need ~6-9 consecutive detections to trigger capture (1-1.5 seconds at 6fps)
     const REQUIRED_CONSECUTIVE = 8; // ~1.3 seconds of stable marker detection
     let cancelled = false;
     
     const scanLoop = () => {
       if (cancelled || isAutoCapturingRef.current) return;
 
-      // Always redraw the overlay every frame — this is the only reliable way
-      // to ensure boxes appear as soon as the video element has a layout size.
+      // Always redraw the overlay every frame
       drawOverlay();
 
       frameCount++;
@@ -600,21 +597,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           consecutiveDetections++;
           setMarkersDetected(true);
           
-          // For manual capture mode (100-item), just show that markers are detected
-          // For auto-capture mode (20/50-item), track stabilization and auto-capture
-          if (isManualCapture) {
-            // Keep markers detected state but don't auto-capture
-            setStabilizationProgress(100); // Show as ready
-          } else {
-            // Update stabilization progress (0-100%)
-            const progress = Math.min(100, Math.round((consecutiveDetections / REQUIRED_CONSECUTIVE) * 100));
-            setStabilizationProgress(progress);
-            
-            if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
-              console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 10).toFixed(1)}s — capturing!`);
-              captureAndProcess();
-              return; // stop the loop
-            }
+          // All templates: auto-capture after stable detection
+          const progress = Math.min(100, Math.round((consecutiveDetections / REQUIRED_CONSECUTIVE) * 100));
+          setStabilizationProgress(progress);
+          
+          if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
+            console.log(`[AutoScan] Markers stable — capturing! (${templateType}-item)`);
+            captureAndProcess();
+            return; // stop the loop
           }
         } else {
           consecutiveDetections = 0;
@@ -2448,22 +2438,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             {/* Status label + progress bar */}
             {(() => {
               const t = getTemplateType();
-              const isManualCapture = t === 100;
-              const label = isManualCapture
-                ? markersDetected
-                  ? '✓ Ready — tap Capture below'
-                  : 'Align sheet and tap Capture when ready'
-                : markersDetected
-                  ? stabilizationProgress >= 100
-                    ? '✓ Capturing now...'
-                    : `Hold steady... ${stabilizationProgress}%`
-                  : t === 20
-                  ? 'Align answer sheet within the frame'
-                  : `Align ${t}-item sheet within the frame`;
+              const label = markersDetected
+                ? stabilizationProgress >= 100
+                  ? '✓ Capturing now...'
+                  : `Hold steady... ${stabilizationProgress}%`
+                : `Align ${t}-item sheet within the frame`;
               return (
                 <>
-                  {/* Progress bar (auto-capture modes only) */}
-                  {!isManualCapture && markersDetected && stabilizationProgress < 100 && (
+                  {/* Progress bar */}
+                  {markersDetected && stabilizationProgress < 100 && (
                     <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 overflow-hidden">
                       <div
                         className="h-full bg-green-400 transition-all duration-150"
@@ -2482,16 +2465,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             })()}
           </div>
           <div className="p-4 flex justify-center gap-3">
-            {getTemplateType() === 100 && (
-              <Button
-                onClick={captureAndProcess}
-                disabled={!markersDetected}
-                className={`${markersDetected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
-              >
-                <Camera className="w-4 h-4 mr-2" />
-                Capture
-              </Button>
-            )}
             <Button variant="outline" onClick={stopCamera}>
               <X className="w-4 h-4 mr-2" />
               Cancel
