@@ -547,7 +547,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // ── Draw live overlay onto the canvas ──
   // ZipGrade style:
   //   • Small square outlines at the 4 expected corner positions (always visible)
-  //   • Green filled squares at the actual detected marker positions
+  //   • Green filled squares ONLY at the guide positions when markers are detected
+  //   • Green squares are fixed to guide positions — they don't wander
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -572,43 +573,37 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     let gw = maxW;
     let gh = gw / paperAspect;
     if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
-    const cx = vw / 2;
-    const cy = vh / 2;
+    const midX = vw / 2;
+    const midY = vh / 2;
 
     const sqSz = Math.round(Math.min(vw, vh) * 0.035);
 
-    // 4 expected corner positions (center of each corner marker)
+    // 4 fixed guide corner positions
     const guidePts = [
-      { x: cx - gw / 2, y: cy - gh / 2 },  // top-left
-      { x: cx + gw / 2, y: cy - gh / 2 },  // top-right
-      { x: cx - gw / 2, y: cy + gh / 2 },  // bottom-left
-      { x: cx + gw / 2, y: cy + gh / 2 },  // bottom-right
+      { x: midX - gw / 2, y: midY - gh / 2 },  // top-left
+      { x: midX + gw / 2, y: midY - gh / 2 },  // top-right
+      { x: midX - gw / 2, y: midY + gh / 2 },  // bottom-left
+      { x: midX + gw / 2, y: midY + gh / 2 },  // bottom-right
     ];
 
-    // Always draw: small square outlines at expected corner positions
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.lineWidth = 1.5;
-    for (const p of guidePts) {
-      ctx.strokeRect(
-        Math.round(p.x - sqSz / 2),
-        Math.round(p.y - sqSz / 2),
-        sqSz, sqSz
-      );
-    }
-
-    // When markers detected: green filled squares at actual positions
     if (liveMarkers) {
-      const corners = [
-        { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
-        { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
-        { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
-        { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
-      ];
+      // Markers detected → green filled squares at the fixed guide positions
       ctx.fillStyle = '#22c55e';
-      for (const c of corners) {
+      for (const p of guidePts) {
         ctx.fillRect(
-          Math.round(c.x - sqSz / 2),
-          Math.round(c.y - sqSz / 2),
+          Math.round(p.x - sqSz / 2),
+          Math.round(p.y - sqSz / 2),
+          sqSz, sqSz
+        );
+      }
+    } else {
+      // No markers → white square outlines at the fixed guide positions
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.lineWidth = 1.5;
+      for (const p of guidePts) {
+        ctx.strokeRect(
+          Math.round(p.x - sqSz / 2),
+          Math.round(p.y - sqSz / 2),
           sqSz, sqSz
         );
       }
