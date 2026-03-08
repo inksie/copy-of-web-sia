@@ -2362,12 +2362,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                     : `Align ${t}-item sheet within the frame`;
                 return (
                   <div className="relative" style={guideStyle}>
-                    <div className={`absolute inset-0 border-2 ${borderColor} rounded-lg transition-colors duration-200`} />
-                    {/* Corner brackets */}
-                    <div className={`absolute top-1 left-1 w-6 h-6 border-t-2 border-l-2 ${cornerColor} rounded-tl transition-colors duration-200`} />
-                    <div className={`absolute top-1 right-1 w-6 h-6 border-t-2 border-r-2 ${cornerColor} rounded-tr transition-colors duration-200`} />
-                    <div className={`absolute bottom-1 left-1 w-6 h-6 border-b-2 border-l-2 ${cornerColor} rounded-bl transition-colors duration-200`} />
-                    <div className={`absolute bottom-1 right-1 w-6 h-6 border-b-2 border-r-2 ${cornerColor} rounded-br transition-colors duration-200`} />
+                    {/* Thin guide border */}
+                    <div className={`absolute inset-0 border ${borderColor} rounded-sm transition-colors duration-200 opacity-40`} />
+                    {/* ZipGrade-style solid filled corner squares */}
+                    <div className={`absolute top-0 left-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 30%, 30% 30%, 30% 100%, 0 100%)' }} />
+                    <div className={`absolute top-0 right-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 70% 100%, 70% 30%, 0 30%)' }} />
+                    <div className={`absolute bottom-0 left-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 30% 0, 30% 70%, 100% 70%, 100% 100%, 0 100%)' }} />
+                    <div className={`absolute bottom-0 right-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(70% 0, 100% 0, 100% 100%, 0 100%, 0 70%, 70% 70%)' }} />
                     {/* Stabilization progress bar when markers detected (only for auto-capture modes) */}
                     {!isManualCapture && markersDetected && stabilizationProgress < 100 && (
                       <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 rounded-b-lg overflow-hidden">
