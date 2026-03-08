@@ -544,10 +544,11 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
-  // ── Draw live corner marker squares onto the overlay canvas ──
-  // ZipGrade style: only show solid green squares at the detected corner marker
-  // positions. No guide frame, no border lines — just the 4 green squares when
-  // all markers are found. Clean camera feed otherwise.
+  // ── Draw live overlay onto the canvas ──
+  // Two modes:
+  //   1. No markers detected → dark semi-transparent overlay with a clear paper-shaped
+  //      cutout in the center (ZipGrade shadow guide) so the user knows where to position.
+  //   2. Markers detected → no shadow, just green squares at the 4 corner positions.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -563,26 +564,49 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    if (!liveMarkers) return; // No markers → clean camera feed, nothing drawn
+    if (liveMarkers) {
+      // ── Markers found: green squares with dark border at each corner ──
+      const sqSz = Math.round(Math.min(vw, vh) * 0.032);
+      const bdr = Math.max(1, Math.round(sqSz * 0.15));
+      const corners = [
+        { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
+        { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
+        { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
+        { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
+      ];
+      for (const c of corners) {
+        const bx = Math.round(c.x - sqSz / 2);
+        const by = Math.round(c.y - sqSz / 2);
+        ctx.fillStyle = '#15532c';
+        ctx.fillRect(bx - bdr, by - bdr, sqSz + bdr * 2, sqSz + bdr * 2);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(bx, by, sqSz, sqSz);
+      }
+    } else {
+      // ── No markers: shadow guide with paper-shaped cutout ──
+      const t = getTemplateType();
+      const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
 
-    // Green squares with dark border at each detected corner marker (ZipGrade style)
-    const sqSz = Math.round(Math.min(vw, vh) * 0.032);
-    const border = Math.max(1, Math.round(sqSz * 0.15));
-    const corners = [
-      { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
-      { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
-      { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
-      { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
-    ];
-    for (const c of corners) {
-      const bx = Math.round(c.x - sqSz / 2);
-      const by = Math.round(c.y - sqSz / 2);
-      // Dark border
-      ctx.fillStyle = '#15532c';
-      ctx.fillRect(bx - border, by - border, sqSz + border * 2, sqSz + border * 2);
-      // Green fill
-      ctx.fillStyle = '#22c55e';
-      ctx.fillRect(bx, by, sqSz, sqSz);
+      const PAD = 0.08;
+      const maxW = vw * (1 - PAD * 2);
+      const maxH = vh * (1 - PAD * 2);
+      let gw = maxW;
+      let gh = gw / paperAspect;
+      if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
+      const gx = Math.round((vw - gw) / 2);
+      const gy = Math.round((vh - gh) / 2);
+      const gwR = Math.round(gw);
+      const ghR = Math.round(gh);
+
+      // Draw full dark overlay, then cut out the paper region
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(0, 0, vw, vh);
+      ctx.clearRect(gx, gy, gwR, ghR);
+
+      // Thin white border around the cutout for visibility
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(gx, gy, gwR, ghR);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
