@@ -223,9 +223,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const t = getTemplateType();
     const paperAspect = t === 50 ? (105 / 297) : t === 100 ? (210 / 297) : (105 / 148.5); // w/h
 
-    // Match the canvas overlay: fit inside 84% of each dimension (100% - 2×8% padding)
-    const maxWfrac = 0.84;
-    const maxHfrac = 0.84;
+    // Match the canvas overlay PAD=0.12 → fit inside 76% of each dimension
+    const maxWfrac = 0.76;
+    const maxHfrac = 0.76;
 
     // Fit aspect ratio inside the available box
     let guideW = maxWfrac;
@@ -374,11 +374,30 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const step = Math.max(2, Math.floor(markerSize / 4));
     
     const t = getTemplateType();
-    // Generous search windows — accommodate up to ~30° tilt
-    const marginX = Math.round(dw * 0.32);
-    const topH = Math.round(dh * 0.32);
-    const botY1 = t === 100 ? Math.round(dh * 0.48) : Math.round(dh * 0.58);
-    const botY2 = t === 100 ? Math.round(dh * 0.96) : dh;
+    // Search windows per template — tighter constraints matching actual marker positions.
+    // The crop region covers the full paper, so fractions are relative to paper dimensions.
+    //
+    // 20-item: markers at x≈5%/91%, yTop≈15%, yBot≈82% of paper
+    // 50-item: markers at x≈5%/91%, yTop≈7%, yBot≈89% of paper
+    // 100-item: markers at x≈1.5%/95%, yTop≈1%, yBot≈89% of paper
+    let marginX: number, topH: number, botY1: number, botY2: number;
+    if (t === 100) {
+      marginX = Math.round(dw * 0.30);
+      topH    = Math.round(dh * 0.20);
+      botY1   = Math.round(dh * 0.70);
+      botY2   = dh;
+    } else if (t === 50) {
+      marginX = Math.round(dw * 0.30);
+      topH    = Math.round(dh * 0.20);
+      botY1   = Math.round(dh * 0.75);
+      botY2   = dh;
+    } else {
+      // 20-item: markers are more inset from top/bottom
+      marginX = Math.round(dw * 0.30);
+      topH    = Math.round(dh * 0.30);
+      botY1   = Math.round(dh * 0.65);
+      botY2   = dh;
+    }
     
     const cornerRegions = [
       { name: 'TL', x1: 0,            y1: 0,    x2: marginX,      y2: topH },
@@ -563,7 +582,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // Paper guide area
+    // Paper guide area — fit paper aspect ratio centered in the viewport
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
     const PAD = 0.12;
@@ -575,15 +594,42 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const midX = vw / 2;
     const midY = vh / 2;
 
-    // Guide box size — large enough that the printed marker fits inside
+    // Paper top-left corner in pixels
+    const paperLeft = midX - gw / 2;
+    const paperTop  = midY - gh / 2;
+
+    // ── Marker positions as fractions of paper width/height ──
+    // These match the actual printed template marker positions from templatePdfGenerator.
+    //
+    // 20-item (105×148.5mm): markerSize=4mm, inset=5mm, topY≈22mm, bottomY≈120mm
+    //   xLeft=5/105≈0.048, xRight=(105-4-5)/105≈0.914
+    //   yTop=22/148.5≈0.148, yBot=120/148.5≈0.808
+    //
+    // 50-item (105×297mm): markerSize=4mm, inset=5mm, topY≈22mm, bottomY≈265mm
+    //   xLeft=0.048, xRight=0.914, yTop=22/297≈0.074, yBot=265/297≈0.892
+    //
+    // 100-item (210×297mm): markerSize=7mm, inset=3mm, topY≈3mm, bottomY≈263mm
+    //   xLeft=3/210≈0.014, xRight=(210-7-3)/210≈0.952
+    //   yTop=3/297≈0.010, yBot=263/297≈0.886
+    let mxL: number, mxR: number, myT: number, myB: number;
+    if (t === 100) {
+      mxL = 0.03; mxR = 0.97; myT = 0.02; myB = 0.90;
+    } else if (t === 50) {
+      mxL = 0.07; mxR = 0.93; myT = 0.08; myB = 0.90;
+    } else {
+      // 20-item
+      mxL = 0.07; mxR = 0.93; myT = 0.15; myB = 0.82;
+    }
+
+    // Guide box size — large enough that the printed marker fits inside comfortably
     const boxSz = Math.round(Math.min(vw, vh) * 0.08);
 
-    // 4 fixed corner positions (center of each guide box)
+    // 4 guide positions at actual marker locations on the paper
     const guidePts = [
-      { x: midX - gw / 2, y: midY - gh / 2 },
-      { x: midX + gw / 2, y: midY - gh / 2 },
-      { x: midX - gw / 2, y: midY + gh / 2 },
-      { x: midX + gw / 2, y: midY + gh / 2 },
+      { x: paperLeft + gw * mxL, y: paperTop + gh * myT }, // TL
+      { x: paperLeft + gw * mxR, y: paperTop + gh * myT }, // TR
+      { x: paperLeft + gw * mxL, y: paperTop + gh * myB }, // BL
+      { x: paperLeft + gw * mxR, y: paperTop + gh * myB }, // BR
     ];
 
     // Draw bordered square guide boxes
