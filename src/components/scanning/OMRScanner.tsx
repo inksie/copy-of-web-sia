@@ -411,25 +411,24 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       let bestContrast = 0;
       let bestCx = (region.x1 + region.x2) / 2;
       let bestCy = (region.y1 + region.y2) / 2;
+      let debugInner = 0, debugBrightSides = 0;
 
       for (let cy = region.y1 + half + 2; cy < region.y2 - half - 2; cy += step) {
         for (let cx = region.x1 + half + 2; cx < region.x2 - half - 2; cx += step) {
           // 1. Interior must be dark
           const inner = rectAvgLive(cx - half, cy - half, cx + half, cy + half);
-          if (inner > darkThreshold) continue;
+          if (inner > darkThreshold) { debugInner = Math.max(debugInner, inner); continue; }
 
           // 2. Uniformity: all 4 quadrants of the marker must be consistently dark
-          //    (rejects isolated dark pixels that aren't solid squares)
           const q1 = rectAvgLive(cx - half, cy - half, cx, cy);
           const q2 = rectAvgLive(cx,         cy - half, cx + half, cy);
           const q3 = rectAvgLive(cx - half, cy,         cx, cy + half);
           const q4 = rectAvgLive(cx,         cy,         cx + half, cy + half);
-          if (Math.max(q1, q2, q3, q4) - Math.min(q1, q2, q3, q4) > 60) continue;
+          if (Math.max(q1, q2, q3, q4) - Math.min(q1, q2, q3, q4) > 70) continue;
 
-          // 3. Paper ring: at least 3 of 4 sides must be bright
-          //    (ensures we're on paper, not a dark desk corner)
-          const ringInner = Math.floor(half * 1.4);
-          const ringOuter = Math.floor(half * 2.8);
+          // 3. At least ONE surrounding side must be bright (on paper, not desk)
+          const ringInner = Math.floor(half * 1.2);
+          const ringOuter = Math.floor(half * 2.5);
           const tB = rectAvgLive(cx - ringOuter, cy - ringOuter, cx + ringOuter, cy - ringInner);
           const bB = rectAvgLive(cx - ringOuter, cy + ringInner, cx + ringOuter, cy + ringOuter);
           const lB = rectAvgLive(cx - ringOuter, cy - ringInner, cx - ringInner, cy + ringInner);
@@ -437,11 +436,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           
           const brightSides = (tB > brightThreshold ? 1 : 0) + (bB > brightThreshold ? 1 : 0)
                              + (lB > brightThreshold ? 1 : 0) + (rB > brightThreshold ? 1 : 0);
-          // Require 2-of-4 bright sides (corner markers sit right at paper edge,
-          // so up to 2 ring-sides may land on background/desk)
-          if (brightSides < 2) continue;
+          debugBrightSides = Math.max(debugBrightSides, brightSides);
+          if (brightSides < 1) continue;
 
-          // 4. Contrast check
+          // 4. Contrast: dark centre vs average of surrounding bright sides
           const borderAvg = (tB + bB + lB + rB) / 4;
           const contrast = borderAvg - inner;
           if (contrast > bestContrast) {
@@ -452,17 +450,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
 
-      if (bestContrast > 40) {
+      if (bestContrast > 30) {
         cornersFound++;
         foundCorners.push(region.name);
         bestPos[region.name] = { cx: bestCx, cy: bestCy };
       }
     }
     
-    // Log periodically for debugging (every ~2 seconds at 6fps)
-    if (Math.random() < 0.08) {
-      console.log(`[LiveScan] ${dw}x${dh} markerSz=${markerSize} darkThr=${darkThreshold.toFixed(0)} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
-    }
+    // Always log for debugging
+    console.log(`[LiveScan] ${dw}x${dh} t=${t} markerSz=${markerSize} darkThr=${darkThreshold.toFixed(0)} brightThr=${brightThreshold.toFixed(0)} globalBrt=${globalBrightness.toFixed(0)} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
     
     const allFound = cornersFound >= 4;
 
