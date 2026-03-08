@@ -537,14 +537,17 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
-  // ── Draw live marker squares onto the overlay canvas ──
+  // ── Draw live guide frame + corner squares onto the overlay canvas ──
   // Runs whenever liveMarkers changes (every ~5th frame = ~6fps).
+  // Always shows:
+  //   • A white rectangular guide frame (where to place the sheet)
+  //   • Small solid squares at each corner (white = searching, green = locked-on)
+  // When all 4 markers are found the frame snaps to the actual paper corners.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
 
-    // Size canvas to match the video element's rendered pixel size
     const vw = video.clientWidth;
     const vh = video.clientHeight;
     if (vw === 0 || vh === 0) return;
@@ -555,57 +558,57 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    if (!liveMarkers) {
-      // No markers — draw the static guide frame corners (white L-brackets)
-      const t = getTemplateType();
+    const t = getTemplateType();
+    const sqSz = Math.round(Math.min(vw, vh) * 0.038); // corner square size
+
+    if (liveMarkers) {
+      // ── Markers found: snap frame to detected paper corners ──
+      const tl = { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh };
+      const tr = { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh };
+      const bl = { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh };
+      const br = { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh };
+
+      // Draw white semi-transparent guide border (quadrilateral)
+      ctx.beginPath();
+      ctx.moveTo(tl.x, tl.y);
+      ctx.lineTo(tr.x, tr.y);
+      ctx.lineTo(br.x, br.y);
+      ctx.lineTo(bl.x, bl.y);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw solid green squares at each corner
+      for (const c of [tl, tr, bl, br]) {
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
+      }
+    } else {
+      // ── No markers yet: draw static guide frame ──
       const guideW = t === 50 ? vw * 0.55 : t === 20 ? vw * 0.75 : vw * 0.90;
       const guideH = t === 50
         ? guideW * (297 / 105)
-        : guideW * (148.5 / 105);
-      const gx = (vw - guideW) / 2;
-      const gy = (vh - guideH) / 2;
-      const arm = Math.round(Math.min(guideW, guideH) * 0.08);
-      const sq = arm;
+        : t === 100
+          ? guideW * (297 / 210)
+          : guideW * (148.5 / 105);
+      const gx = Math.round((vw - guideW) / 2);
+      const gy = Math.round((vh - guideH) / 2);
+      const gw = Math.round(guideW);
+      const gh = Math.round(guideH);
 
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      // TL
-      ctx.fillRect(gx, gy, sq, arm * 0.28);
-      ctx.fillRect(gx, gy, arm * 0.28, sq);
-      // TR
-      ctx.fillRect(gx + guideW - sq, gy, sq, arm * 0.28);
-      ctx.fillRect(gx + guideW - arm * 0.28, gy, arm * 0.28, sq);
-      // BL
-      ctx.fillRect(gx, gy + guideH - arm * 0.28, sq, arm * 0.28);
-      ctx.fillRect(gx, gy + guideH - sq, arm * 0.28, sq);
-      // BR
-      ctx.fillRect(gx + guideW - sq, gy + guideH - arm * 0.28, sq, arm * 0.28);
-      ctx.fillRect(gx + guideW - arm * 0.28, gy + guideH - sq, arm * 0.28, sq);
-      return;
+      // White border rectangle
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(gx, gy, gw, gh);
+
+      // White corner squares
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(gx - Math.round(sqSz / 2), gy - Math.round(sqSz / 2), sqSz, sqSz);
+      ctx.fillRect(gx + gw - Math.round(sqSz / 2), gy - Math.round(sqSz / 2), sqSz, sqSz);
+      ctx.fillRect(gx - Math.round(sqSz / 2), gy + gh - Math.round(sqSz / 2), sqSz, sqSz);
+      ctx.fillRect(gx + gw - Math.round(sqSz / 2), gy + gh - Math.round(sqSz / 2), sqSz, sqSz);
     }
-
-    // Draw green squares at the 4 detected corner marker positions
-    const sqSize = Math.round(Math.min(vw, vh) * 0.045);
-    const corners = [liveMarkers.tl, liveMarkers.tr, liveMarkers.bl, liveMarkers.br];
-    for (const c of corners) {
-      const px = c.x * vw;
-      const py = c.y * vh;
-      ctx.fillStyle = '#22c55e';
-      ctx.fillRect(Math.round(px - sqSize / 2), Math.round(py - sqSize / 2), sqSize, sqSize);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = Math.max(1.5, sqSize * 0.12);
-      ctx.strokeRect(Math.round(px - sqSize / 2), Math.round(py - sqSize / 2), sqSize, sqSize);
-    }
-
-    // Draw thin green connecting lines between corners
-    ctx.strokeStyle = 'rgba(34,197,94,0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(liveMarkers.tl.x * vw, liveMarkers.tl.y * vh);
-    ctx.lineTo(liveMarkers.tr.x * vw, liveMarkers.tr.y * vh);
-    ctx.lineTo(liveMarkers.br.x * vw, liveMarkers.br.y * vh);
-    ctx.lineTo(liveMarkers.bl.x * vw, liveMarkers.bl.y * vh);
-    ctx.closePath();
-    ctx.stroke();
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
   // Uses 0.25° bins (241 bins total) for sub-degree accuracy.
@@ -955,7 +958,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       // Draw debug overlay showing detected marker positions and ID bubble sample points
       // ── ZipGrade-style result overlay ──
       // Draw the scanned image, then paint:
-      //   • Solid green squares at each of the 4 detected corner markers
+      //   • Green border box around each of the 4 detected corner markers
       //   • A circle over every answered bubble: green=correct, red=wrong, yellow=multiple
       if (debugMarkers) {
         const overlayCanvas = document.createElement('canvas');
@@ -967,10 +970,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
           const iw = enhancedCanvas.width;
           const ih = enhancedCanvas.height;
-          // Square size ~ 2% of the shorter image dimension
-          const sqSize = Math.max(12, Math.round(Math.min(iw, ih) * 0.025));
+          // Square size ~2.8% of the shorter image dimension
+          const boxSize = Math.max(16, Math.round(Math.min(iw, ih) * 0.028));
 
-          // 1. Solid green squares at the 4 corner markers
+          // 1. Green solid squares at the 4 corner markers (matching live camera style)
           const corners = [
             debugMarkers.topLeft,
             debugMarkers.topRight,
@@ -978,22 +981,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             debugMarkers.bottomRight,
           ];
           for (const c of corners) {
-            oCtx.fillStyle = '#22c55e'; // green-500
-            oCtx.fillRect(
-              Math.round(c.x - sqSize / 2),
-              Math.round(c.y - sqSize / 2),
-              sqSize,
-              sqSize
-            );
-            // Thin white border for contrast
-            oCtx.strokeStyle = '#ffffff';
-            oCtx.lineWidth = Math.max(1, sqSize * 0.12);
-            oCtx.strokeRect(
-              Math.round(c.x - sqSize / 2),
-              Math.round(c.y - sqSize / 2),
-              sqSize,
-              sqSize
-            );
+            const bx = Math.round(c.x - boxSize / 2);
+            const by = Math.round(c.y - boxSize / 2);
+            oCtx.fillStyle = '#22c55e';
+            oCtx.fillRect(bx, by, boxSize, boxSize);
           }
 
           // 2. Circles over answered bubbles
