@@ -12,7 +12,6 @@ import {
   CheckCircle,
   Save,
   User,
-  Camera
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -425,7 +424,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           const q2 = rectAvgLive(cx,         cy - half, cx + half, cy);
           const q3 = rectAvgLive(cx - half, cy,         cx, cy + half);
           const q4 = rectAvgLive(cx,         cy,         cx + half, cy + half);
-          if (Math.max(q1, q2, q3, q4) - Math.min(q1, q2, q3, q4) > 45) continue;
+          if (Math.max(q1, q2, q3, q4) - Math.min(q1, q2, q3, q4) > 60) continue;
 
           // 3. Paper ring: at least 3 of 4 sides must be bright
           //    (ensures we're on paper, not a dark desk corner)
@@ -438,8 +437,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           
           const brightSides = (tB > brightThreshold ? 1 : 0) + (bB > brightThreshold ? 1 : 0)
                              + (lB > brightThreshold ? 1 : 0) + (rB > brightThreshold ? 1 : 0);
-          // Require 3-of-4 bright sides (corner markers sit near paper edge, so 1 dark side OK)
-          if (brightSides < 3) continue;
+          // Require 2-of-4 bright sides (corner markers sit right at paper edge,
+          // so up to 2 ring-sides may land on background/desk)
+          if (brightSides < 2) continue;
 
           // 4. Contrast check
           const borderAvg = (tB + bB + lB + rB) / 4;
@@ -452,7 +452,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
       }
 
-      if (bestContrast > 55) {
+      if (bestContrast > 40) {
         cornersFound++;
         foundCorners.push(region.name);
         bestPos[region.name] = { cx: bestCx, cy: bestCy };
