@@ -545,9 +545,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade layout: solid black letterbox bars on the sides/top/bottom so only
-  // a paper-shaped window of the camera feed is visible. Green corner squares
-  // appear when all 4 markers are detected.
+  // ZipGrade style:
+  //   • Light semi-transparent shadow over the entire camera feed
+  //   • Square outlines (light borders) at the expected paper corner positions
+  //   • When markers detected: green filled squares replace the outlines
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -563,34 +564,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // ── Always draw black letterbox bars ──
+    // ── Semi-transparent shadow over entire camera feed ──
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, vw, vh);
+
+    // Paper guide dimensions (for positioning corner squares)
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
-
-    // Fit paper shape to fill as much of the viewport as possible
-    let gw = vw;
+    const PAD = 0.06;
+    const maxW = vw * (1 - PAD * 2);
+    const maxH = vh * (1 - PAD * 2);
+    let gw = maxW;
     let gh = gw / paperAspect;
-    if (gh > vh) { gh = vh; gw = gh * paperAspect; }
-    const gx = Math.round((vw - gw) / 2);
-    const gy = Math.round((vh - gh) / 2);
-    const gwR = Math.round(gw);
-    const ghR = Math.round(gh);
+    if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
+    const gx = (vw - gw) / 2;
+    const gy = (vh - gh) / 2;
 
-    // Draw solid black bars around the paper window
-    ctx.fillStyle = '#000000';
-    // Top bar
-    if (gy > 0) ctx.fillRect(0, 0, vw, gy);
-    // Bottom bar
-    if (gy + ghR < vh) ctx.fillRect(0, gy + ghR, vw, vh - (gy + ghR));
-    // Left bar
-    if (gx > 0) ctx.fillRect(0, gy, gx, ghR);
-    // Right bar
-    if (gx + gwR < vw) ctx.fillRect(gx + gwR, gy, vw - (gx + gwR), ghR);
+    const sqSz = Math.round(Math.min(vw, vh) * 0.035);
+    const lineW = Math.max(1.5, Math.round(sqSz * 0.12));
 
-    // ── Green corner squares when markers are detected ──
     if (liveMarkers) {
-      const sqSz = Math.round(Math.min(vw, vh) * 0.032);
-      const bdr = Math.max(1, Math.round(sqSz * 0.15));
+      // ── Markers detected: green filled squares at actual detected positions ──
       const corners = [
         { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
         { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
@@ -600,10 +594,23 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       for (const c of corners) {
         const bx = Math.round(c.x - sqSz / 2);
         const by = Math.round(c.y - sqSz / 2);
-        ctx.fillStyle = '#15532c';
-        ctx.fillRect(bx - bdr, by - bdr, sqSz + bdr * 2, sqSz + bdr * 2);
         ctx.fillStyle = '#22c55e';
         ctx.fillRect(bx, by, sqSz, sqSz);
+      }
+    } else {
+      // ── No markers: white/light square outlines at expected corner positions ──
+      const guideCorners = [
+        { x: gx, y: gy },                  // top-left
+        { x: gx + gw, y: gy },             // top-right
+        { x: gx, y: gy + gh },             // bottom-left
+        { x: gx + gw, y: gy + gh },        // bottom-right
+      ];
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = lineW;
+      for (const c of guideCorners) {
+        const bx = Math.round(c.x - sqSz / 2);
+        const by = Math.round(c.y - sqSz / 2);
+        ctx.strokeRect(bx, by, sqSz, sqSz);
       }
     }
   }, [liveMarkers, mode]);
