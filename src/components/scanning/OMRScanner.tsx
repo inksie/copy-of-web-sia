@@ -805,7 +805,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log(`[OMR] Processing enhanced image: ${imageData.width}x${imageData.height}`);
       
       // Process the image to detect filled bubbles
-      const { studentId, answers, multipleAnswers, idDoubleShades, rawIdDigits: detectedRawIdDigits, debugMarkers, markersFound, markerConfidence } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
+      const { studentId, answers, multipleAnswers, idDoubleShades, rawIdDigits: detectedRawIdDigits, debugMarkers, markersFound, markerConfidence, bubbleHits } = await detectBubbles(imageData, exam.num_items, exam.choices_per_item);
       
       // Check for alignment issues based on marker detection quality
       if (!markersFound || markerConfidence < 0.5) {
@@ -848,115 +848,84 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       setDebugInfo(dbgLines.join(' | '));
       
       // Draw debug overlay showing detected marker positions and ID bubble sample points
+      // ── ZipGrade-style result overlay ──
+      // Draw the scanned image, then paint:
+      //   • Solid green squares at each of the 4 detected corner markers
+      //   • A circle over every answered bubble: green=correct, red=wrong, yellow=multiple
       if (debugMarkers) {
-        const debugCanvas = document.createElement('canvas');
-        debugCanvas.width = enhancedCanvas.width;
-        debugCanvas.height = enhancedCanvas.height;
-        const dCtx = debugCanvas.getContext('2d');
-        if (dCtx) {
-          dCtx.drawImage(enhancedCanvas, 0, 0);
-          
-          // Draw marker positions as large red circles with crosshairs
-          const markerPoints = [
-            { label: 'TL', ...debugMarkers.topLeft },
-            { label: 'TR', ...debugMarkers.topRight },
-            { label: 'BL', ...debugMarkers.bottomLeft },
-            { label: 'BR', ...debugMarkers.bottomRight },
-          ];
-          for (const mp of markerPoints) {
-            // Filled red dot
-            dCtx.fillStyle = 'rgba(255, 0, 0, 0.6)';
-            dCtx.beginPath();
-            dCtx.arc(mp.x, mp.y, 12, 0, Math.PI * 2);
-            dCtx.fill();
-            // White crosshair for visibility
-            dCtx.strokeStyle = '#FFFFFF';
-            dCtx.lineWidth = 2;
-            dCtx.beginPath();
-            dCtx.moveTo(mp.x - 25, mp.y);
-            dCtx.lineTo(mp.x + 25, mp.y);
-            dCtx.moveTo(mp.x, mp.y - 25);
-            dCtx.lineTo(mp.x, mp.y + 25);
-            dCtx.stroke();
-            // Red outline circle
-            dCtx.strokeStyle = '#FF0000';
-            dCtx.lineWidth = 3;
-            dCtx.beginPath();
-            dCtx.arc(mp.x, mp.y, 20, 0, Math.PI * 2);
-            dCtx.stroke();
-            // Label with background
-            dCtx.fillStyle = '#FF0000';
-            dCtx.font = 'bold 20px sans-serif';
-            dCtx.fillText(mp.label, mp.x + 24, mp.y - 12);
-          }
-          
-          // Draw connecting lines between markers (bright green, thick)
-          dCtx.strokeStyle = '#00FF00';
-          dCtx.lineWidth = 2;
-          dCtx.setLineDash([10, 5]);
-          dCtx.beginPath();
-          dCtx.moveTo(debugMarkers.topLeft.x, debugMarkers.topLeft.y);
-          dCtx.lineTo(debugMarkers.topRight.x, debugMarkers.topRight.y);
-          dCtx.lineTo(debugMarkers.bottomRight.x, debugMarkers.bottomRight.y);
-          dCtx.lineTo(debugMarkers.bottomLeft.x, debugMarkers.bottomLeft.y);
-          dCtx.closePath();
-          dCtx.stroke();
-          dCtx.setLineDash([]);
+        const overlayCanvas = document.createElement('canvas');
+        overlayCanvas.width = enhancedCanvas.width;
+        overlayCanvas.height = enhancedCanvas.height;
+        const oCtx = overlayCanvas.getContext('2d');
+        if (oCtx) {
+          oCtx.drawImage(enhancedCanvas, 0, 0);
 
-          // Draw ID bubble sample positions as blue dots with column/row annotations
-          // This lets us verify the grid is properly aligned with the ID bubbles
-          // We use 9 columns for 9-digit student IDs
-          const layout = getTemplateLayout(exam.num_items);
-          for (let col = 0; col < 9; col++) {
-            for (let row = 0; row < 10; row++) {
-              const nx = layout.id.firstColNX + col * layout.id.colSpacingNX;
-              const ny = layout.id.firstRowNY + row * layout.id.rowSpacingNY;
-              // Bilinear interpolation (same as mapToPixel)
-              const topX = debugMarkers.topLeft.x + nx * (debugMarkers.topRight.x - debugMarkers.topLeft.x);
-              const topY = debugMarkers.topLeft.y + nx * (debugMarkers.topRight.y - debugMarkers.topLeft.y);
-              const botX = debugMarkers.bottomLeft.x + nx * (debugMarkers.bottomRight.x - debugMarkers.bottomLeft.x);
-              const botY = debugMarkers.bottomLeft.y + nx * (debugMarkers.bottomRight.y - debugMarkers.bottomLeft.y);
-              const px = topX + ny * (botX - topX);
-              const py = topY + ny * (botY - topY);
-              
-              // Use bright cyan for visibility, larger dots
-              dCtx.fillStyle = 'rgba(0, 200, 255, 0.8)';
-              dCtx.beginPath();
-              dCtx.arc(px, py, 5, 0, Math.PI * 2);
-              dCtx.fill();
-              dCtx.strokeStyle = '#000000';
-              dCtx.lineWidth = 1;
-              dCtx.stroke();
-            }
-            // Label each column at the top
-            const nx0 = layout.id.firstColNX + col * layout.id.colSpacingNX;
-            const ny0 = layout.id.firstRowNY - layout.id.rowSpacingNY * 0.8; // slightly above first row
-            const topX0 = debugMarkers.topLeft.x + nx0 * (debugMarkers.topRight.x - debugMarkers.topLeft.x);
-            const topY0 = debugMarkers.topLeft.y + nx0 * (debugMarkers.topRight.y - debugMarkers.topLeft.y);
-            const botX0 = debugMarkers.bottomLeft.x + nx0 * (debugMarkers.bottomRight.x - debugMarkers.bottomLeft.x);
-            const botY0 = debugMarkers.bottomLeft.y + nx0 * (debugMarkers.bottomRight.y - debugMarkers.bottomLeft.y);
-            const labelPx = topX0 + ny0 * (botX0 - topX0);
-            const labelPy = topY0 + ny0 * (botY0 - topY0);
-            dCtx.fillStyle = '#FFFF00';
-            dCtx.font = 'bold 12px sans-serif';
-            dCtx.fillText(`C${col}`, labelPx - 6, labelPy);
+          const iw = enhancedCanvas.width;
+          const ih = enhancedCanvas.height;
+          // Square size ~ 2% of the shorter image dimension
+          const sqSize = Math.max(12, Math.round(Math.min(iw, ih) * 0.025));
+
+          // 1. Solid green squares at the 4 corner markers
+          const corners = [
+            debugMarkers.topLeft,
+            debugMarkers.topRight,
+            debugMarkers.bottomLeft,
+            debugMarkers.bottomRight,
+          ];
+          for (const c of corners) {
+            oCtx.fillStyle = '#22c55e'; // green-500
+            oCtx.fillRect(
+              Math.round(c.x - sqSize / 2),
+              Math.round(c.y - sqSize / 2),
+              sqSize,
+              sqSize
+            );
+            // Thin white border for contrast
+            oCtx.strokeStyle = '#ffffff';
+            oCtx.lineWidth = Math.max(1, sqSize * 0.12);
+            oCtx.strokeRect(
+              Math.round(c.x - sqSize / 2),
+              Math.round(c.y - sqSize / 2),
+              sqSize,
+              sqSize
+            );
           }
-          
-          setCapturedImage(debugCanvas.toDataURL('image/png'));
+
+          // 2. Circles over answered bubbles
+          const lineW = Math.max(2, Math.round(Math.min(iw, ih) * 0.004));
+          for (const hit of bubbleHits) {
+            const qIdx = hit.qIndex;
+            const isMultiple = multipleAnswers.includes(qIdx + 1);
+            const isCorrect = answerKey[qIdx] && hit.choice.toUpperCase() === answerKey[qIdx].toUpperCase();
+
+            if (isMultiple) {
+              oCtx.strokeStyle = '#facc15'; // yellow-400
+            } else if (isCorrect) {
+              oCtx.strokeStyle = '#22c55e'; // green-500
+            } else {
+              oCtx.strokeStyle = '#ef4444'; // red-500
+            }
+            oCtx.lineWidth = lineW;
+            oCtx.beginPath();
+            oCtx.ellipse(hit.px, hit.py, hit.rx * 1.15, hit.ry * 1.15, 0, 0, Math.PI * 2);
+            oCtx.stroke();
+          }
+
+          setCapturedImage(overlayCanvas.toDataURL('image/png'));
         }
       }
-      
+
       setDetectedStudentId(studentId);
       setDetectedAnswers(answers);
       setMultipleAnswerQuestions(multipleAnswers);
       setIdDoubleShadeColumns(idDoubleShades);
       setRawIdDigits(detectedRawIdDigits || []); // Store raw digit array for UI display
-      
+
       // Validate student ID against class roster
       // Consider alignment errors when classifying ID detection issues
       let idError: string | null = null;
       let matched: Student | null = null;
-      
+
       // If there's an alignment error and ID detection issues, prioritize the alignment message
       const hasAlignmentIssue = !markersFound || markerConfidence < 0.5;
       
@@ -1733,6 +1702,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       bottomLeft: { x: number; y: number };
       bottomRight: { x: number; y: number };
     };
+    // Pixel coords of each detected answer bubble for overlay drawing
+    bubbleHits: Array<{ px: number; py: number; rx: number; ry: number; choice: string; qIndex: number }>;
   }> => {
     const { data, width, height } = imageData;
 
@@ -1801,7 +1772,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     // 5. Detect student ID and answers using GRAYSCALE for bubble sampling
     const { studentId, doubleShadeColumns, rawIdDigits } = detectStudentIdFromImage(grayscale, width, height, effectiveMarkers, layout);
-    const { answers, multipleAnswers } = detectAnswersFromImage(
+    const { answers, multipleAnswers, bubbleHits } = detectAnswersFromImage(
       grayscale, width, height, effectiveMarkers, layout, numQuestions, choicesPerQuestion
     );
 
@@ -1813,7 +1784,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       rawIdDigits, // Include raw digit array for UI display
       markersFound: markers.found,
       markerConfidence: noMarkersAtAll ? 0 : markers.confidence,
-      debugMarkers: effectiveMarkers 
+      debugMarkers: effectiveMarkers,
+      bubbleHits,
     };
   };
 
@@ -2014,9 +1986,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     layout: TemplateLayout,
     numQuestions: number,
     choicesPerQuestion: number
-  ): { answers: string[]; multipleAnswers: number[] } => {
+  ): { answers: string[]; multipleAnswers: number[]; bubbleHits: Array<{ px: number; py: number; rx: number; ry: number; choice: string; qIndex: number }> } => {
     const answers = new Array<string>(numQuestions).fill('');
     const multipleAnswers: number[] = [];
+    const bubbleHits: Array<{ px: number; py: number; rx: number; ry: number; choice: string; qIndex: number }> = [];
     const choiceLabels = 'ABCDEFGH'.slice(0, choicesPerQuestion).split('');
 
     const frameW = markers.topRight.x - markers.topLeft.x;
@@ -2034,14 +2007,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const qIndex = q - 1;
         const rowInBlock = q - block.startQ;
 
-        const fills: { choice: string; brightness: number }[] = [];
+        const fills: { choice: string; brightness: number; px: number; py: number }[] = [];
 
         for (let c = 0; c < choicesPerQuestion; c++) {
           const nx = block.firstBubbleNX + c * block.bubbleSpacingNX;
           const ny = block.firstBubbleNY + rowInBlock * block.rowSpacingNY;
           const { px, py } = mapToPixel(markers, nx, ny);
           const brightness = sampleBubbleAt(grayscale, width, height, px, py, bubbleRX, bubbleRY);
-          fills.push({ choice: choiceLabels[c], brightness });
+          fills.push({ choice: choiceLabels[c], brightness, px, py });
         }
 
         // Sort ASCENDING by brightness — darkest (most filled) first
@@ -2086,9 +2059,15 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         }
 
         answers[qIndex] = selectedChoice;
+
+        // Record bubble hit for overlay drawing
+        if (selectedChoice) {
+          const hit = fills.find(f => f.choice === selectedChoice);
+          if (hit) bubbleHits.push({ px: hit.px, py: hit.py, rx: bubbleRX, ry: bubbleRY, choice: selectedChoice, qIndex });
+        }
       }
     }
-    return { answers, multipleAnswers };
+    return { answers, multipleAnswers, bubbleHits };
   };
 
   // Calculate letter grade
@@ -2346,7 +2325,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                   ? { width: '55%', aspectRatio: '105 / 297' }     // tall narrow
                   : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
                 const borderColor = markersDetected ? 'border-green-400' : 'border-white/60';
-                const cornerColor = markersDetected ? 'border-green-400' : 'border-white';
                 const isManualCapture = t === 100; // 100-item uses manual capture
                 // Show different labels based on template type and marker detection
                 const label = isManualCapture
