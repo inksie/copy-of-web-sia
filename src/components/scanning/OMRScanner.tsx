@@ -458,7 +458,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     }
     
     // Always log for debugging
-    console.log(`[LiveScan] ${dw}x${dh} t=${t} markerSz=${markerSize} darkThr=${darkThreshold.toFixed(0)} brightThr=${brightThreshold.toFixed(0)} globalBrt=${globalBrightness.toFixed(0)} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
+    const debugStr = `${dw}x${dh} t=${t} sz=${markerSize} dark=${darkThreshold.toFixed(0)} bright=${brightThreshold.toFixed(0)} brt=${globalBrightness.toFixed(0)} found=${foundCorners.join(',') || 'none'} (${cornersFound}/4)`;
+    console.log(`[LiveScan] ${debugStr}`);
+    setDebugInfo(debugStr);
     
     const allFound = cornersFound >= 4;
 
@@ -2450,6 +2452,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
                       />
                     </div>
                   )}
+                  {/* Debug overlay — top of camera view */}
+                  {debugInfo ? (
+                    <div className="absolute top-2 left-2 right-2 pointer-events-none">
+                      <p className="text-white text-[10px] bg-black/70 px-2 py-1 rounded font-mono leading-tight break-all">
+                        {debugInfo}
+                      </p>
+                    </div>
+                  ) : null}
                   {/* Status pill */}
                   <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
                     <p className={`whitespace-nowrap text-white text-xs ${markersDetected ? 'bg-green-600/80' : 'bg-black/60'} px-3 py-1.5 rounded-full transition-colors duration-200`}>
