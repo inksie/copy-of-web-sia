@@ -375,14 +375,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // Search windows match the exact marker positions from templatePdfGenerator:
     //   50-item: yTop≈7.4%, yBot≈79.5%  →  search top 0–20%, bottom 65–100%
     //   20-item: yTop≈14.8%, yBot≈88.9% →  search top 0–28%, bottom 75–100%
-    //   100-item: yTop≈1%, yBot≈87.9%   →  search top 0–15%, bottom 72–100%
-    // X margins cover left/right 30% of paper to catch the 6.7% / 93.3% positions.
+    //   100-item: yTop≈2.2%, yBot≈74.7% → search top 0–15%, bottom 60–85%
+    // X margins cover left/right 20-25% of paper to catch the 3.1% / 96.9% positions.
     let marginX: number, topH: number, botY1: number, botY2: number;
     if (t === 100) {
       marginX = Math.round(dw * 0.20);
       topH    = Math.round(dh * 0.15);
-      botY1   = Math.round(dh * 0.72);
-      botY2   = dh;
+      botY1   = Math.round(dh * 0.60);
+      botY2   = Math.round(dh * 0.85);
     } else if (t === 50) {
       marginX = Math.round(dw * 0.25);
       topH    = Math.round(dh * 0.20);
@@ -534,12 +534,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     //   Y bot (20-item, 105×148.5): maxQY≈130mm → bottomY=132/148.5≈0.889
     //
     // Full sheet (100-item, 210×297): markerSize=7mm, inset=3mm
-    //   X: (3+3.5)/210≈0.031, (210-3-3.5)/210≈0.969
-    //   Y top: inset=3mm → 3/297≈0.010
-    //   Y bot: maxQY≈258mm → bottomY=261/297≈0.879
+    //   X: (3+3.5)/210=0.031, (210-3-3.5)/210=0.969
+    //   Y top: startY+inset+markerSize/2 = 3+3.5 = 6.5mm → 6.5/297=0.022
+    //   Y bot: bmY=maxQY+3, maxQY≈215.5 → bmY=218.5, center=222mm → 222/297=0.747
     let mxL: number, mxR: number, myT: number, myB: number;
     if (t === 100) {
-      mxL = 0.031; mxR = 0.969; myT = 0.010; myB = 0.879;
+      mxL = 0.031; mxR = 0.969; myT = 0.022; myB = 0.747;
     } else if (t === 50) {
       // 105×297mm
       mxL = 0.067; mxR = 0.933; myT = 0.074; myB = 0.795;
