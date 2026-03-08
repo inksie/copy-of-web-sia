@@ -487,6 +487,76 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return { found: false, markers: null };
   }, [exam]);
 
+  // ── Draw guide box overlay onto the canvas ──
+  // Called every scan frame so it always reflects the current video layout.
+  // Uses getBoundingClientRect() which is reliable even on mobile/h-auto videos.
+  const drawOverlay = useCallback(() => {
+    const canvas = liveOverlayRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    const rect = video.getBoundingClientRect();
+    const vw = Math.round(rect.width);
+    const vh = Math.round(rect.height);
+    if (vw === 0 || vh === 0) return;
+
+    // Only resize the canvas if dimensions changed (avoids flicker)
+    if (canvas.width !== vw || canvas.height !== vh) {
+      canvas.width = vw;
+      canvas.height = vh;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, vw, vh);
+
+    // Paper guide area — fit paper aspect ratio centered in the viewport
+    const t = getTemplateType();
+    const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
+    const PAD = 0.12;
+    const maxW = vw * (1 - PAD * 2);
+    const maxH = vh * (1 - PAD * 2);
+    let gw = maxW;
+    let gh = gw / paperAspect;
+    if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
+    const midX = vw / 2;
+    const midY = vh / 2;
+
+    const paperLeft = midX - gw / 2;
+    const paperTop  = midY - gh / 2;
+
+    // Marker positions as fractions of paper width/height —
+    // matched to templatePdfGenerator printed marker coords.
+    let mxL: number, mxR: number, myT: number, myB: number;
+    if (t === 100) {
+      mxL = 0.03; mxR = 0.97; myT = 0.02; myB = 0.90;
+    } else if (t === 50) {
+      mxL = 0.07; mxR = 0.93; myT = 0.08; myB = 0.90;
+    } else {
+      mxL = 0.07; mxR = 0.93; myT = 0.15; myB = 0.82;
+    }
+
+    const boxSz = Math.round(Math.min(vw, vh) * 0.08);
+
+    const guidePts = [
+      { x: paperLeft + gw * mxL, y: paperTop + gh * myT }, // TL
+      { x: paperLeft + gw * mxR, y: paperTop + gh * myT }, // TR
+      { x: paperLeft + gw * mxL, y: paperTop + gh * myB }, // BL
+      { x: paperLeft + gw * mxR, y: paperTop + gh * myB }, // BR
+    ];
+
+    // White outer stroke + dark inner stroke for visibility on any background
+    ctx.lineWidth = 3;
+    for (const p of guidePts) {
+      const bx = Math.round(p.x - boxSz / 2);
+      const by = Math.round(p.y - boxSz / 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.strokeRect(bx - 1, by - 1, boxSz + 2, boxSz + 2);
+      ctx.strokeStyle = 'rgba(20,20,20,0.95)';
+      ctx.strokeRect(bx, by, boxSz, boxSz);
+    }
+  }, [exam]);
+
   // ── Auto-scan loop: continuously check for markers in the video feed ──
   // For 100-item templates, we only detect markers but don't auto-capture (manual button instead)
   useEffect(() => {
@@ -503,9 +573,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     const scanLoop = () => {
       if (cancelled || isAutoCapturingRef.current) return;
-      
+
+      // Always redraw the overlay every frame — this is the only reliable way
+      // to ensure boxes appear as soon as the video element has a layout size.
+      drawOverlay();
+
       frameCount++;
-      // Only scan every 3rd frame (~10fps at 30fps video) — fast enough to feel responsive
+      // Only run marker detection every 3rd frame (~10fps at 30fps video)
       if (frameCount % 3 === 0) {
         const result = detectMarkersInFrame();
         const detected = result.found;
@@ -555,98 +629,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       setMarkersDetected(false);
       setStabilizationProgress(0);
     };
-  }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
+  }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess, drawOverlay]);
 
-  // ── Draw live overlay onto the canvas ──
-  // Extracted as a callback so it can be triggered immediately on video load/resize,
-  // not just when React state changes (which would cause a visible delay).
-  const drawOverlay = useCallback(() => {
-    const canvas = liveOverlayRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
-
-    // Use offsetWidth/offsetHeight — valid even before loadedmetadata
-    const vw = video.offsetWidth;
-    const vh = video.offsetHeight;
-    if (vw === 0 || vh === 0) return;
-    canvas.width = vw;
-    canvas.height = vh;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, vw, vh);
-
-    // Paper guide area — fit paper aspect ratio centered in the viewport
-    const t = getTemplateType();
-    const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
-    const PAD = 0.12;
-    const maxW = vw * (1 - PAD * 2);
-    const maxH = vh * (1 - PAD * 2);
-    let gw = maxW;
-    let gh = gw / paperAspect;
-    if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
-    const midX = vw / 2;
-    const midY = vh / 2;
-
-    // Paper top-left corner in pixels
-    const paperLeft = midX - gw / 2;
-    const paperTop  = midY - gh / 2;
-
-    // ── Marker positions as fractions of paper width/height ──
-    // These match the actual printed template marker positions from templatePdfGenerator.
-    let mxL: number, mxR: number, myT: number, myB: number;
-    if (t === 100) {
-      mxL = 0.03; mxR = 0.97; myT = 0.02; myB = 0.90;
-    } else if (t === 50) {
-      mxL = 0.07; mxR = 0.93; myT = 0.08; myB = 0.90;
-    } else {
-      // 20-item
-      mxL = 0.07; mxR = 0.93; myT = 0.15; myB = 0.82;
-    }
-
-    // Guide box size — large enough that the printed marker fits inside comfortably
-    const boxSz = Math.round(Math.min(vw, vh) * 0.08);
-
-    // 4 guide positions at actual marker locations on the paper
-    const guidePts = [
-      { x: paperLeft + gw * mxL, y: paperTop + gh * myT }, // TL
-      { x: paperLeft + gw * mxR, y: paperTop + gh * myT }, // TR
-      { x: paperLeft + gw * mxL, y: paperTop + gh * myB }, // BL
-      { x: paperLeft + gw * mxR, y: paperTop + gh * myB }, // BR
-    ];
-
-    // Draw bordered square guide boxes
-    ctx.strokeStyle = 'rgba(80, 80, 80, 0.9)';
-    ctx.lineWidth = 2;
-    for (const p of guidePts) {
-      const bx = Math.round(p.x - boxSz / 2);
-      const by = Math.round(p.y - boxSz / 2);
-      ctx.strokeRect(bx, by, boxSz, boxSz);
-    }
-  }, [exam]); // re-draw when exam (template type) changes
-
-  // Redraw the overlay whenever mode enters 'camera', and also attach a
-  // loadedmetadata + resize listener so the boxes appear as soon as the video
-  // element has a size — no waiting for marker detection state to change.
-  useEffect(() => {
-    if (mode !== 'camera') return;
-    const video = videoRef.current;
-    if (!video) return;
-
-    // Draw immediately (in case video is already sized, e.g. on hot-reload)
-    drawOverlay();
-
-    // Draw again once the video stream has dimensions
-    video.addEventListener('loadedmetadata', drawOverlay);
-
-    // Also redraw on window resize (orientation change on mobile)
-    window.addEventListener('resize', drawOverlay);
-
-    return () => {
-      video.removeEventListener('loadedmetadata', drawOverlay);
-      window.removeEventListener('resize', drawOverlay);
-    };
-  }, [mode, drawOverlay]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
   // Uses 0.25° bins (241 bins total) for sub-degree accuracy.
   // Only edges with high magnitude vote, and votes are weighted by magnitude so strong
