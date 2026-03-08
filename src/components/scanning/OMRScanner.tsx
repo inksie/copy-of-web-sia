@@ -72,6 +72,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [markersDetected, setMarkersDetected] = useState(false);
   const [stabilizationProgress, setStabilizationProgress] = useState(0); // 0-100%
   const [alignmentError, setAlignmentError] = useState<string | null>(null);
+  // Live marker positions as fractions of the video element size (0-1), for overlay rendering
+  const [liveMarkers, setLiveMarkers] = useState<{ tl: {x:number;y:number}; tr: {x:number;y:number}; bl: {x:number;y:number}; br: {x:number;y:number} } | null>(null);
+  const liveOverlayRef = useRef<HTMLCanvasElement>(null);
 
   // Keep streamRef in sync with stream state
   useEffect(() => {
@@ -289,12 +292,12 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // Uses an integral image for fast region averages and a stricter
   // uniformity + contrast check to reduce false positives.
   // Returns true if 4 dark squares are found in approximately the right positions.
-  const detectMarkersInFrame = useCallback((): boolean => {
-    if (!videoRef.current || !scanCanvasRef.current) return false;
+  const detectMarkersInFrame = useCallback((): { found: boolean; markers: { tl:{x:number;y:number}; tr:{x:number;y:number}; bl:{x:number;y:number}; br:{x:number;y:number} } | null } => {
+    if (!videoRef.current || !scanCanvasRef.current) return { found: false, markers: null };
     
     const video = videoRef.current;
-    if (video.readyState < 2) return false; // HAVE_CURRENT_DATA
-    if (video.videoWidth === 0 || video.videoHeight === 0) return false;
+    if (video.readyState < 2) return { found: false, markers: null }; // HAVE_CURRENT_DATA
+    if (video.videoWidth === 0 || video.videoHeight === 0) return { found: false, markers: null };
     
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -302,13 +305,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     const scanCanvas = scanCanvasRef.current;
     const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return false;
+    if (!ctx) return { found: false, markers: null };
     
     // Use 480px wide for better accuracy while staying fast
     const targetW = 480;
     const scale = targetW / (crop.w * vw);
     const dw = Math.round(crop.w * vw * scale);
     const dh = Math.round(crop.h * vh * scale);
+
     
     scanCanvas.width = dw;
     scanCanvas.height = dh;
@@ -378,9 +382,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     let cornersFound = 0;
     const foundCorners: string[] = [];
+    // Best pixel position per corner in downscaled-crop space
+    const bestPos: Record<string, { cx: number; cy: number }> = {};
     
     for (const region of cornerRegions) {
       let bestContrast = 0;
+      let bestCx = (region.x1 + region.x2) / 2;
+      let bestCy = (region.y1 + region.y2) / 2;
 
       for (let cy = region.y1 + half + 2; cy < region.y2 - half - 2; cy += step) {
         for (let cx = region.x1 + half + 2; cx < region.x2 - half - 2; cx += step) {
@@ -413,13 +421,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           // 4. Contrast check
           const borderAvg = (tB + bB + lB + rB) / 4;
           const contrast = borderAvg - inner;
-          if (contrast > bestContrast) bestContrast = contrast;
+          if (contrast > bestContrast) {
+            bestContrast = contrast;
+            bestCx = cx;
+            bestCy = cy;
+          }
         }
       }
 
       if (bestContrast > 55) {
         cornersFound++;
         foundCorners.push(region.name);
+        bestPos[region.name] = { cx: bestCx, cy: bestCy };
       }
     }
     
@@ -428,7 +441,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       console.log(`[LiveScan] ${dw}x${dh} markerSz=${markerSize} darkThr=${darkThreshold.toFixed(0)} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
     }
     
-    return cornersFound >= 4;
+    const allFound = cornersFound >= 4;
+
+    if (allFound) {
+      // Convert best positions from downscaled-crop space → fraction of full video element
+      // crop.x/y/w/h are already fractions of the video dimensions
+      const toFrac = (cx: number, cy: number) => ({
+        x: crop.x + (cx / dw) * crop.w,
+        y: crop.y + (cy / dh) * crop.h,
+      });
+      return {
+        found: true,
+        markers: {
+          tl: toFrac(bestPos['TL'].cx, bestPos['TL'].cy),
+          tr: toFrac(bestPos['TR'].cx, bestPos['TR'].cy),
+          bl: toFrac(bestPos['BL'].cx, bestPos['BL'].cy),
+          br: toFrac(bestPos['BR'].cx, bestPos['BR'].cy),
+        },
+      };
+    }
+    return { found: false, markers: null };
   }, [exam]);
 
   // ── Auto-scan loop: continuously check for markers in the video feed ──
@@ -452,11 +484,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       frameCount++;
       // Only scan every 5th frame (~6fps at 30fps video) to save CPU
       if (frameCount % 5 === 0) {
-        const detected = detectMarkersInFrame();
+        const result = detectMarkersInFrame();
+        const detected = result.found;
         
-        if (detected) {
+        if (detected && result.markers) {
           consecutiveDetections++;
           setMarkersDetected(true);
+          setLiveMarkers(result.markers);
           
           // For manual capture mode (100-item), just show that markers are detected
           // For auto-capture mode (20/50-item), track stabilization and auto-capture
@@ -477,6 +511,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         } else {
           consecutiveDetections = 0;
           setMarkersDetected(false);
+          setLiveMarkers(null);
           setStabilizationProgress(0);
         }
       }
@@ -497,11 +532,81 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         autoScanTimerRef.current = null;
       }
       setMarkersDetected(false);
+      setLiveMarkers(null);
       setStabilizationProgress(0);
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
-  // ─── SKEW DETECTION AND CORRECTION ───
+  // ── Draw live marker squares onto the overlay canvas ──
+  // Runs whenever liveMarkers changes (every ~5th frame = ~6fps).
+  useEffect(() => {
+    const canvas = liveOverlayRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    // Size canvas to match the video element's rendered pixel size
+    const vw = video.clientWidth;
+    const vh = video.clientHeight;
+    if (vw === 0 || vh === 0) return;
+    canvas.width = vw;
+    canvas.height = vh;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, vw, vh);
+
+    if (!liveMarkers) {
+      // No markers — draw the static guide frame corners (white L-brackets)
+      const t = getTemplateType();
+      const guideW = t === 50 ? vw * 0.55 : t === 20 ? vw * 0.75 : vw * 0.90;
+      const guideH = t === 50
+        ? guideW * (297 / 105)
+        : guideW * (148.5 / 105);
+      const gx = (vw - guideW) / 2;
+      const gy = (vh - guideH) / 2;
+      const arm = Math.round(Math.min(guideW, guideH) * 0.08);
+      const sq = arm;
+
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      // TL
+      ctx.fillRect(gx, gy, sq, arm * 0.28);
+      ctx.fillRect(gx, gy, arm * 0.28, sq);
+      // TR
+      ctx.fillRect(gx + guideW - sq, gy, sq, arm * 0.28);
+      ctx.fillRect(gx + guideW - arm * 0.28, gy, arm * 0.28, sq);
+      // BL
+      ctx.fillRect(gx, gy + guideH - arm * 0.28, sq, arm * 0.28);
+      ctx.fillRect(gx, gy + guideH - sq, arm * 0.28, sq);
+      // BR
+      ctx.fillRect(gx + guideW - sq, gy + guideH - arm * 0.28, sq, arm * 0.28);
+      ctx.fillRect(gx + guideW - arm * 0.28, gy + guideH - sq, arm * 0.28, sq);
+      return;
+    }
+
+    // Draw green squares at the 4 detected corner marker positions
+    const sqSize = Math.round(Math.min(vw, vh) * 0.045);
+    const corners = [liveMarkers.tl, liveMarkers.tr, liveMarkers.bl, liveMarkers.br];
+    for (const c of corners) {
+      const px = c.x * vw;
+      const py = c.y * vh;
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(Math.round(px - sqSize / 2), Math.round(py - sqSize / 2), sqSize, sqSize);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1.5, sqSize * 0.12);
+      ctx.strokeRect(Math.round(px - sqSize / 2), Math.round(py - sqSize / 2), sqSize, sqSize);
+    }
+
+    // Draw thin green connecting lines between corners
+    ctx.strokeStyle = 'rgba(34,197,94,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(liveMarkers.tl.x * vw, liveMarkers.tl.y * vh);
+    ctx.lineTo(liveMarkers.tr.x * vw, liveMarkers.tr.y * vh);
+    ctx.lineTo(liveMarkers.br.x * vw, liveMarkers.br.y * vh);
+    ctx.lineTo(liveMarkers.bl.x * vw, liveMarkers.bl.y * vh);
+    ctx.closePath();
+    ctx.stroke();
+  }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
   // Uses 0.25° bins (241 bins total) for sub-degree accuracy.
   // Only edges with high magnitude vote, and votes are weighted by magnitude so strong
@@ -2298,10 +2403,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       {/* Mode: Camera */}
       {mode === 'camera' && (
         <Card className="overflow-hidden">
-          {/* 
-            Camera container: always use the native video stream aspect ratio.
-            The guide overlay inside adapts its shape to match the paper template.
-          */}
           <div className="relative bg-black">
             <video
               ref={videoRef}
@@ -2309,66 +2410,51 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
               playsInline
               className="w-full h-auto block"
             />
-            {/* Camera overlay guide — adapts to template */}
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-              {/* Semi-transparent overlay around the guide */}
-              {(() => {
-                const t = getTemplateType();
-                // Paper aspect ratios (width:height)
-                // 20-item: 105 x 148.5mm  → ~0.707
-                // 50-item: 105 x 297mm    → ~0.354
-                // 100-item: 210 x 297mm   → ~0.707
-                // Guide occupies most of the view, with padding
-                const guideStyle = t === 20
-                  ? { width: '75%', aspectRatio: '105 / 148.5' }   // landscape-ish small card
-                  : t === 50
-                  ? { width: '55%', aspectRatio: '105 / 297' }     // tall narrow
-                  : { width: '90%', aspectRatio: '210 / 297' };    // A4 portrait — tight fit to minimize background
-                const borderColor = markersDetected ? 'border-green-400' : 'border-white/60';
-                const isManualCapture = t === 100; // 100-item uses manual capture
-                // Show different labels based on template type and marker detection
-                const label = isManualCapture
-                  ? markersDetected
-                    ? '✓ Ready — tap Capture below'
-                    : 'Align sheet and tap Capture when ready'
-                  : markersDetected
-                    ? stabilizationProgress >= 100
-                      ? '✓ Capturing now...'
-                      : `Hold steady... ${stabilizationProgress}%`
-                    : t === 20
-                    ? 'Align answer sheet within the frame'
-                    : `Align ${t}-item sheet within the frame`;
-                return (
-                  <div className="relative" style={guideStyle}>
-                    {/* Thin guide border */}
-                    <div className={`absolute inset-0 border ${borderColor} rounded-sm transition-colors duration-200 opacity-40`} />
-                    {/* ZipGrade-style solid filled corner squares */}
-                    <div className={`absolute top-0 left-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 30%, 30% 30%, 30% 100%, 0 100%)' }} />
-                    <div className={`absolute top-0 right-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 70% 100%, 70% 30%, 0 30%)' }} />
-                    <div className={`absolute bottom-0 left-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(0 0, 30% 0, 30% 70%, 100% 70%, 100% 100%, 0 100%)' }} />
-                    <div className={`absolute bottom-0 right-0 w-7 h-7 ${markersDetected ? 'bg-green-400' : 'bg-white'} transition-colors duration-200`} style={{ clipPath: 'polygon(70% 0, 100% 0, 100% 100%, 0 100%, 0 70%, 70% 70%)' }} />
-                    {/* Stabilization progress bar when markers detected (only for auto-capture modes) */}
-                    {!isManualCapture && markersDetected && stabilizationProgress < 100 && (
-                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 rounded-b-lg overflow-hidden">
-                        <div 
-                          className="h-full bg-green-400 transition-all duration-150"
-                          style={{ width: `${stabilizationProgress}%` }}
-                        />
-                      </div>
-                    )}
-                    {/* Label */}
-                    <p className={`absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-white text-xs ${markersDetected ? 'bg-green-600/80' : 'bg-black/60'} px-3 py-1.5 rounded-full transition-colors duration-200`}>
+            {/* Full-video canvas overlay — draws live green squares on detected corner markers */}
+            <canvas
+              ref={liveOverlayRef}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{ mixBlendMode: 'normal' }}
+            />
+            {/* Status label + progress bar */}
+            {(() => {
+              const t = getTemplateType();
+              const isManualCapture = t === 100;
+              const label = isManualCapture
+                ? markersDetected
+                  ? '✓ Ready — tap Capture below'
+                  : 'Align sheet and tap Capture when ready'
+                : markersDetected
+                  ? stabilizationProgress >= 100
+                    ? '✓ Capturing now...'
+                    : `Hold steady... ${stabilizationProgress}%`
+                  : t === 20
+                  ? 'Align answer sheet within the frame'
+                  : `Align ${t}-item sheet within the frame`;
+              return (
+                <>
+                  {/* Progress bar (auto-capture modes only) */}
+                  {!isManualCapture && markersDetected && stabilizationProgress < 100 && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30 overflow-hidden">
+                      <div
+                        className="h-full bg-green-400 transition-all duration-150"
+                        style={{ width: `${stabilizationProgress}%` }}
+                      />
+                    </div>
+                  )}
+                  {/* Status pill */}
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
+                    <p className={`whitespace-nowrap text-white text-xs ${markersDetected ? 'bg-green-600/80' : 'bg-black/60'} px-3 py-1.5 rounded-full transition-colors duration-200`}>
                       {label}
                     </p>
                   </div>
-                );
-              })()}
-            </div>
+                </>
+              );
+            })()}
           </div>
           <div className="p-4 flex justify-center gap-3">
-            {/* Capture button for 100-item (manual capture) */}
             {getTemplateType() === 100 && (
-              <Button 
+              <Button
                 onClick={captureAndProcess}
                 disabled={!markersDetected}
                 className={`${markersDetected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
