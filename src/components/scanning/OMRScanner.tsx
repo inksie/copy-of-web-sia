@@ -545,9 +545,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade style: small square outlines (viewfinders) at the 4 expected paper
-  // corners. Gray when searching, green when markers are detected.
-  // Fixed positions — they never wander.
+  // ZipGrade style: small gray square outlines (viewfinders) at the 4 corners
+  // where the paper's printed corner markers should align.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -563,10 +562,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // Paper guide area
+    // Paper guide area — generous padding so viewfinders sit well inside the view
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
-    const PAD = 0.05;
+    const PAD = 0.15;
     const maxW = vw * (1 - PAD * 2);
     const maxH = vh * (1 - PAD * 2);
     let gw = maxW;
@@ -575,8 +574,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const midX = vw / 2;
     const midY = vh / 2;
 
-    const sqSz = Math.round(Math.min(vw, vh) * 0.04);
-    const lineW = Math.max(2, Math.round(sqSz * 0.12));
+    // Viewfinder square size (~3% of shorter dimension)
+    const sqSz = Math.round(Math.min(vw, vh) * 0.03);
 
     // 4 fixed corner positions
     const guidePts = [
@@ -586,9 +585,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       { x: midX + gw / 2, y: midY + gh / 2 },
     ];
 
-    // Gray outline when searching, green outline when markers detected
-    ctx.strokeStyle = liveMarkers ? '#22c55e' : 'rgba(160, 160, 160, 0.8)';
-    ctx.lineWidth = lineW;
+    // Always gray square outlines — same as ZipGrade
+    ctx.strokeStyle = 'rgba(100, 100, 100, 0.9)';
+    ctx.lineWidth = 2;
     for (const p of guidePts) {
       ctx.strokeRect(
         Math.round(p.x - sqSz / 2),
