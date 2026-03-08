@@ -545,10 +545,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade style:
-  //   • Small square outlines at the 4 expected corner positions (always visible)
-  //   • Green filled squares ONLY at the guide positions when markers are detected
-  //   • Green squares are fixed to guide positions — they don't wander
+  // ZipGrade style: small square outlines (viewfinders) at the 4 expected paper
+  // corners. Gray when searching, green when markers are detected.
+  // Fixed positions — they never wander.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -564,7 +563,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // Paper guide area for corner positions
+    // Paper guide area
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
     const PAD = 0.05;
@@ -576,37 +575,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const midX = vw / 2;
     const midY = vh / 2;
 
-    const sqSz = Math.round(Math.min(vw, vh) * 0.035);
+    const sqSz = Math.round(Math.min(vw, vh) * 0.04);
+    const lineW = Math.max(2, Math.round(sqSz * 0.12));
 
-    // 4 fixed guide corner positions
+    // 4 fixed corner positions
     const guidePts = [
-      { x: midX - gw / 2, y: midY - gh / 2 },  // top-left
-      { x: midX + gw / 2, y: midY - gh / 2 },  // top-right
-      { x: midX - gw / 2, y: midY + gh / 2 },  // bottom-left
-      { x: midX + gw / 2, y: midY + gh / 2 },  // bottom-right
+      { x: midX - gw / 2, y: midY - gh / 2 },
+      { x: midX + gw / 2, y: midY - gh / 2 },
+      { x: midX - gw / 2, y: midY + gh / 2 },
+      { x: midX + gw / 2, y: midY + gh / 2 },
     ];
 
-    if (liveMarkers) {
-      // Markers detected → green filled squares at the fixed guide positions
-      ctx.fillStyle = '#22c55e';
-      for (const p of guidePts) {
-        ctx.fillRect(
-          Math.round(p.x - sqSz / 2),
-          Math.round(p.y - sqSz / 2),
-          sqSz, sqSz
-        );
-      }
-    } else {
-      // No markers → white square outlines at the fixed guide positions
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.lineWidth = 1.5;
-      for (const p of guidePts) {
-        ctx.strokeRect(
-          Math.round(p.x - sqSz / 2),
-          Math.round(p.y - sqSz / 2),
-          sqSz, sqSz
-        );
-      }
+    // Gray outline when searching, green outline when markers detected
+    ctx.strokeStyle = liveMarkers ? '#22c55e' : 'rgba(160, 160, 160, 0.8)';
+    ctx.lineWidth = lineW;
+    for (const p of guidePts) {
+      ctx.strokeRect(
+        Math.round(p.x - sqSz / 2),
+        Math.round(p.y - sqSz / 2),
+        sqSz, sqSz
+      );
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
