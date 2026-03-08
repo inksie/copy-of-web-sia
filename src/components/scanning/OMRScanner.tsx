@@ -545,8 +545,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade style: small gray square outlines (viewfinders) at the 4 corners
-  // where the paper's printed corner markers should align.
+  // Square guide boxes at the 4 corners where the user should align the paper's
+  // printed corner markers. Each box is a bordered square target zone — the marker
+  // should fit inside the box. This constrains where marker detection looks.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -562,10 +563,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // Paper guide area — generous padding so viewfinders sit well inside the view
+    // Paper guide area
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
-    const PAD = 0.15;
+    const PAD = 0.12;
     const maxW = vw * (1 - PAD * 2);
     const maxH = vh * (1 - PAD * 2);
     let gw = maxW;
@@ -574,10 +575,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const midX = vw / 2;
     const midY = vh / 2;
 
-    // Viewfinder square size (~3% of shorter dimension)
-    const sqSz = Math.round(Math.min(vw, vh) * 0.03);
+    // Guide box size — large enough that the printed marker fits inside
+    const boxSz = Math.round(Math.min(vw, vh) * 0.08);
 
-    // 4 fixed corner positions
+    // 4 fixed corner positions (center of each guide box)
     const guidePts = [
       { x: midX - gw / 2, y: midY - gh / 2 },
       { x: midX + gw / 2, y: midY - gh / 2 },
@@ -585,14 +586,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       { x: midX + gw / 2, y: midY + gh / 2 },
     ];
 
-    // Solid dark filled squares — same as ZipGrade viewfinders
-    ctx.fillStyle = 'rgba(40, 40, 40, 0.85)';
+    // Draw bordered square guide boxes
+    ctx.strokeStyle = 'rgba(80, 80, 80, 0.9)';
+    ctx.lineWidth = 2;
     for (const p of guidePts) {
-      ctx.fillRect(
-        Math.round(p.x - sqSz / 2),
-        Math.round(p.y - sqSz / 2),
-        sqSz, sqSz
-      );
+      const bx = Math.round(p.x - boxSz / 2);
+      const by = Math.round(p.y - boxSz / 2);
+      ctx.strokeRect(bx, by, boxSz, boxSz);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
