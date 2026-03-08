@@ -585,11 +585,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       { x: midX + gw / 2, y: midY + gh / 2 },
     ];
 
-    // Always gray square outlines — same as ZipGrade
-    ctx.strokeStyle = 'rgba(100, 100, 100, 0.9)';
-    ctx.lineWidth = 2;
+    // Solid dark filled squares — same as ZipGrade viewfinders
+    ctx.fillStyle = 'rgba(40, 40, 40, 0.85)';
     for (const p of guidePts) {
-      ctx.strokeRect(
+      ctx.fillRect(
         Math.round(p.x - sqSz / 2),
         Math.round(p.y - sqSz / 2),
         sqSz, sqSz
