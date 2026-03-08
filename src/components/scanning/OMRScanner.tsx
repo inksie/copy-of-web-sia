@@ -565,8 +565,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     if (!liveMarkers) return; // No markers → clean camera feed, nothing drawn
 
-    // Solid green squares at each detected corner marker
-    const sqSz = Math.round(Math.min(vw, vh) * 0.04);
+    // Green squares with dark border at each detected corner marker (ZipGrade style)
+    const sqSz = Math.round(Math.min(vw, vh) * 0.032);
+    const border = Math.max(1, Math.round(sqSz * 0.15));
     const corners = [
       { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
       { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
@@ -574,8 +575,14 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
     ];
     for (const c of corners) {
+      const bx = Math.round(c.x - sqSz / 2);
+      const by = Math.round(c.y - sqSz / 2);
+      // Dark border
+      ctx.fillStyle = '#15532c';
+      ctx.fillRect(bx - border, by - border, sqSz + border * 2, sqSz + border * 2);
+      // Green fill
       ctx.fillStyle = '#22c55e';
-      ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
+      ctx.fillRect(bx, by, sqSz, sqSz);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
@@ -941,16 +948,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           // Square size ~2.8% of the shorter image dimension
           const boxSize = Math.max(16, Math.round(Math.min(iw, ih) * 0.028));
 
-          // 1. Green solid squares at the 4 corner markers (matching live camera style)
+          // 1. Green squares with dark border at the 4 corner markers (ZipGrade style)
           const corners = [
             debugMarkers.topLeft,
             debugMarkers.topRight,
             debugMarkers.bottomLeft,
             debugMarkers.bottomRight,
           ];
+          const border = Math.max(1, Math.round(boxSize * 0.15));
           for (const c of corners) {
             const bx = Math.round(c.x - boxSize / 2);
             const by = Math.round(c.y - boxSize / 2);
+            // Dark border
+            oCtx.fillStyle = '#15532c';
+            oCtx.fillRect(bx - border, by - border, boxSize + border * 2, boxSize + border * 2);
+            // Green fill
             oCtx.fillStyle = '#22c55e';
             oCtx.fillRect(bx, by, boxSize, boxSize);
           }
