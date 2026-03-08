@@ -545,10 +545,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade style: fixed white guide boxes at the 4 corners of the expected paper
-  // area. When a marker is detected in a corner, a green filled square appears
-  // inside the guide box. The boxes keep the markers anchored to predictable
-  // positions so they don't wander across the screen.
+  // ZipGrade style:
+  //   • Small square outlines at the 4 expected corner positions (always visible)
+  //   • Green filled squares at the actual detected marker positions
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -564,7 +563,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // Compute paper guide area
+    // Paper guide area for corner positions
     const t = getTemplateType();
     const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
     const PAD = 0.05;
@@ -573,46 +572,45 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     let gw = maxW;
     let gh = gw / paperAspect;
     if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
-    const gx = (vw - gw) / 2;
-    const gy = (vh - gh) / 2;
+    const cx = vw / 2;
+    const cy = vh / 2;
 
-    // Guide box size and marker square size
-    const boxSz = Math.round(Math.min(vw, vh) * 0.08);  // outer guide box
-    const mkSz = Math.round(boxSz * 0.45);               // inner marker square
+    const sqSz = Math.round(Math.min(vw, vh) * 0.035);
 
-    // Fixed corner positions (guide boxes anchored to paper corners)
-    const guideCorners = [
-      { x: gx, y: gy },                          // top-left
-      { x: gx + gw - boxSz, y: gy },             // top-right
-      { x: gx, y: gy + gh - boxSz },             // bottom-left
-      { x: gx + gw - boxSz, y: gy + gh - boxSz }, // bottom-right
+    // 4 expected corner positions (center of each corner marker)
+    const guidePts = [
+      { x: cx - gw / 2, y: cy - gh / 2 },  // top-left
+      { x: cx + gw / 2, y: cy - gh / 2 },  // top-right
+      { x: cx - gw / 2, y: cy + gh / 2 },  // bottom-left
+      { x: cx + gw / 2, y: cy + gh / 2 },  // bottom-right
     ];
 
-    // Draw guide boxes (always visible — semi-transparent white)
-    for (const g of guideCorners) {
-      const bx = Math.round(g.x);
-      const by = Math.round(g.y);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.fillRect(bx, by, boxSz, boxSz);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(bx, by, boxSz, boxSz);
+    // Always draw: small square outlines at expected corner positions
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    for (const p of guidePts) {
+      ctx.strokeRect(
+        Math.round(p.x - sqSz / 2),
+        Math.round(p.y - sqSz / 2),
+        sqSz, sqSz
+      );
     }
 
-    // Draw green marker squares inside the guide boxes when detected
+    // When markers detected: green filled squares at actual positions
     if (liveMarkers) {
-      const detected = [
-        { pos: liveMarkers.tl, guide: guideCorners[0] },
-        { pos: liveMarkers.tr, guide: guideCorners[1] },
-        { pos: liveMarkers.bl, guide: guideCorners[2] },
-        { pos: liveMarkers.br, guide: guideCorners[3] },
+      const corners = [
+        { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
+        { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
+        { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
+        { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
       ];
-      for (const d of detected) {
-        // Center the green square inside the guide box
-        const cx = Math.round(d.guide.x + (boxSz - mkSz) / 2);
-        const cy = Math.round(d.guide.y + (boxSz - mkSz) / 2);
-        ctx.fillStyle = '#22c55e';
-        ctx.fillRect(cx, cy, mkSz, mkSz);
+      ctx.fillStyle = '#22c55e';
+      for (const c of corners) {
+        ctx.fillRect(
+          Math.round(c.x - sqSz / 2),
+          Math.round(c.y - sqSz / 2),
+          sqSz, sqSz
+        );
       }
     }
   }, [liveMarkers, mode]);
