@@ -662,37 +662,48 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     return rotateCanvas(srcCanvas, angle);
   };
 
-  // ─── IMAGE ENHANCEMENT: Adaptive brightness + unsharp-mask sharpening ───
-  // 1. Adaptive brightness (local grid normalisation) handles shadows/uneven illumination.
-  // 2. Unsharp-mask sharpening accentuates bubble edges so the ink contrast is
-  //    crisp even for light pencil marks. Does NOT warp the image — perspective
-  //    correction is handled by the 4-corner marker system in detectBubbles.
+  // ─── IMAGE ENHANCEMENT: Adaptive brightness (white-level normalisation only) ───
+  // Scales each pixel so the local paper-white maps to 245.
+  //
+  // KEY DESIGN DECISIONS to avoid the "blue inversion" artefact:
+  //  1. Grid size is 96px — large enough that a tile containing mostly desk
+  //     background still borrows the paper-white level from adjacent tiles via
+  //     bilinear interpolation, instead of computing a tiny ~40 local white.
+  //  2. safeWhite floor is 130 — we never divide by anything < 130, so even a
+  //     tile that is 100% dark desk gets at most a 245/130 ≈ 1.88× boost,
+  //     which is a gentle brightening rather than a wild 6× amplification.
+  //  3. We use GRAYSCALE luminance (not max-channel) for the percentile sample
+  //     so that a blue desk doesn't inflate only the blue reference level.
   const enhanceImage = (srcCanvas: HTMLCanvasElement): HTMLCanvasElement => {
     const ctx = srcCanvas.getContext('2d');
     if (!ctx) return srcCanvas;
-    
+
     const w = srcCanvas.width;
     const h = srcCanvas.height;
-    
-    // Work on a copy so we don't mutate the source
+
     const outCanvas = document.createElement('canvas');
     outCanvas.width = w;
     outCanvas.height = h;
     const outCtx = outCanvas.getContext('2d');
     if (!outCtx) return srcCanvas;
     outCtx.drawImage(srcCanvas, 0, 0);
-    
+
     const imgData = outCtx.getImageData(0, 0, w, h);
     const d = imgData.data;
-    
-    // ── Pass 1: Adaptive brightness normalisation ──
-    // Each grid cell finds the local "paper white" level and scales it to 245.
-    const gridSize = 40; // smaller grid → tighter local normalisation
+
+    // Build a luminance (grayscale) plane for percentile sampling only.
+    // This ensures a blue/coloured background doesn't skew a single channel.
+    const lum = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      lum[i] = Math.round(0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]);
+    }
+
+    // Large grid so dark-background tiles get a sensible white level from neighbours
+    const gridSize = 96;
     const gW = Math.ceil(w / gridSize);
     const gH = Math.ceil(h / gridSize);
     const gridWhite = new Float32Array(gW * gH);
-    const gridBlack = new Float32Array(gW * gH);
-    
+
     for (let gy = 0; gy < gH; gy++) {
       for (let gx = 0; gx < gW; gx++) {
         const samples: number[] = [];
@@ -700,19 +711,18 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const x1 = gx * gridSize, x2 = Math.min(w, (gx + 1) * gridSize);
         for (let py = y1; py < y2; py += 3) {
           for (let px = x1; px < x2; px += 3) {
-            const i = (py * w + px) * 4;
-            samples.push(Math.max(d[i], d[i + 1], d[i + 2]));
+            samples.push(lum[py * w + px]);
           }
         }
         samples.sort((a, b) => a - b);
-        // 88th percentile → local paper white (avoids specular highlights)
-        gridWhite[gy * gW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.88)] : 200;
-        // 5th percentile → local ink black (anchors the dark end)
-        gridBlack[gy * gW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.05)] : 0;
+        // 90th percentile of luminance → local paper-white estimate
+        gridWhite[gy * gW + gx] = samples.length > 0
+          ? samples[Math.floor(samples.length * 0.90)]
+          : 200;
       }
     }
-    
-    // Apply with bilinear interpolation for smooth transitions
+
+    // Bilinear interpolation across grid cells
     for (let py = 0; py < h; py++) {
       for (let px = 0; px < w; px++) {
         const gxf = px / gridSize - 0.5;
@@ -723,79 +733,29 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const gy1 = Math.min(gH - 1, gy0 + 1);
         const fx = Math.max(0, Math.min(1, gxf - gx0));
         const fy = Math.max(0, Math.min(1, gyf - gy0));
-        
-        // Bilinear white level
+
         const w00 = gridWhite[gy0 * gW + gx0];
         const w10 = gridWhite[gy0 * gW + gx1];
         const w01 = gridWhite[gy1 * gW + gx0];
         const w11 = gridWhite[gy1 * gW + gx1];
-        const localWhite = w00 * (1 - fx) * (1 - fy) + w10 * fx * (1 - fy) +
-                           w01 * (1 - fx) * fy       + w11 * fx * fy;
-        // Bilinear black level
-        const b00 = gridBlack[gy0 * gW + gx0];
-        const b10 = gridBlack[gy0 * gW + gx1];
-        const b01 = gridBlack[gy1 * gW + gx0];
-        const b11 = gridBlack[gy1 * gW + gx1];
-        const localBlack = b00 * (1 - fx) * (1 - fy) + b10 * fx * (1 - fy) +
-                           b01 * (1 - fx) * fy        + b11 * fx * fy;
-        
-        // Linear stretch: black → 10, white → 245
-        const safeRange = Math.max(30, localWhite - localBlack);
-        
+        const localWhite = w00 * (1 - fx) * (1 - fy) + w10 * fx * (1 - fy)
+                         + w01 * (1 - fx) * fy        + w11 * fx * fy;
+
+        // Floor at 130: caps boost at ~1.88× even for fully-dark tiles.
+        // This prevents the blue-inversion artefact on dark desk backgrounds.
+        const safeWhite = Math.max(130, localWhite);
+        const scale = 245 / safeWhite;
+
         const i = (py * w + px) * 4;
-        for (let c = 0; c < 3; c++) {
-          const normalized = ((d[i + c] - localBlack) / safeRange) * 235 + 10;
-          d[i + c] = Math.max(0, Math.min(255, Math.round(normalized)));
-        }
+        d[i]     = Math.min(255, Math.round(d[i]     * scale));
+        d[i + 1] = Math.min(255, Math.round(d[i + 1] * scale));
+        d[i + 2] = Math.min(255, Math.round(d[i + 2] * scale));
       }
     }
 
     outCtx.putImageData(imgData, 0, 0);
-
-    // ── Pass 2: Unsharp mask (Amount=0.8, Radius≈1px, Threshold=4) ──
-    // Sharpens bubble edges so ink marks are well-defined for the threshold detector.
-    // We do this on a second copy to avoid accumulating rounding errors.
-    const sharpCanvas = document.createElement('canvas');
-    sharpCanvas.width = w;
-    sharpCanvas.height = h;
-    const sCtx = sharpCanvas.getContext('2d');
-    if (!sCtx) {
-      console.log(`[Enhance] Brightness done (${w}x${h}), sharpening skipped`);
-      return outCanvas;
-    }
-    sCtx.drawImage(outCanvas, 0, 0);
-
-    // Create blurred version using a tiny box blur (radius 1) applied twice
-    // to approximate a Gaussian — fast and good enough for unsharp mask.
-    const blurCanvas = document.createElement('canvas');
-    blurCanvas.width = w;
-    blurCanvas.height = h;
-    const bCtx = blurCanvas.getContext('2d');
-    if (!bCtx) return outCanvas;
-    bCtx.filter = 'blur(1.2px)';
-    bCtx.drawImage(outCanvas, 0, 0);
-    bCtx.filter = 'none';
-
-    const sharpData = sCtx.getImageData(0, 0, w, h);
-    const blurData  = bCtx.getImageData(0, 0, w, h);
-    const sd = sharpData.data;
-    const bd = blurData.data;
-
-    const AMOUNT = 0.9;      // sharpening strength (0 = none, 1 = full, >1 = over-sharpen)
-    const THRESHOLD = 4;     // only sharpen if blurred pixel differs by this much
-
-    for (let i = 0; i < sd.length; i += 4) {
-      for (let c = 0; c < 3; c++) {
-        const diff = sd[i + c] - bd[i + c];
-        if (Math.abs(diff) >= THRESHOLD) {
-          sd[i + c] = Math.max(0, Math.min(255, Math.round(sd[i + c] + AMOUNT * diff)));
-        }
-      }
-    }
-    sCtx.putImageData(sharpData, 0, 0);
-
-    console.log(`[Enhance] Brightness + sharpening done: ${w}x${h}, grid=${gridSize}px`);
-    return sharpCanvas;
+    console.log(`[Enhance] Adaptive brightness done: ${w}x${h}, grid=${gridSize}px, safeWhiteFloor=130`);
+    return outCanvas;
   };
 
   // Process the captured image using OMR
@@ -1263,35 +1223,41 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       };
     }
 
-    // For 100-item templates, pre-filter candidates to those near edges
-    // This removes false positives from section markers (■) inside the sheet
+    // ── Edge-proximity filter for ALL template types ──
+    // Corner alignment markers must be near the edges of the captured image.
+    // This is the single most effective way to reject interior section markers (■)
+    // that also happen to look like dark squares surrounded by bright paper.
+    //
+    // How tight to make the margin depends on how much of the image the paper fills:
+    //   20-item  guide = 75% frame width  → paper corners in outer ~12% of image
+    //   50-item  guide = 55% frame width  → paper corners in outer ~22% of image
+    //   100-item guide = 90% frame width  → paper corners in outer ~10% of image
+    //
+    // We use generous margins (2-2.5×) to accommodate rotation and alignment error:
+    //   20-item  → 28% margin  (2.3× the expected 12%)
+    //   50-item  → 32% margin  (1.5× the expected 22%)
+    //   100-item → 28% margin  (2.8× the expected 10%)
+    //
+    // A "corner candidate" must be near at least one LEFT/RIGHT edge AND at
+    // least one TOP/BOTTOM edge — so it occupies a corner quadrant of the image.
     let filteredCandidates = merged;
-    if (templateType === 100) {
-      // For 100-item, the paper fills most of the image
-      // True corner markers should be in the outer 35% of image width/height
-      // (allowing for some paper rotation/offset)
-      const edgeMarginX = width * 0.35;
-      const edgeMarginY = height * 0.35;
-      
-      filteredCandidates = merged.filter(c => {
-        const nearLeftEdge = c.x < edgeMarginX;
-        const nearRightEdge = c.x > width - edgeMarginX;
-        const nearTopEdge = c.y < edgeMarginY;
-        const nearBottomEdge = c.y > height - edgeMarginY;
-        
-        // Must be near at least one horizontal AND one vertical edge
-        const nearHorizontalEdge = nearLeftEdge || nearRightEdge;
-        const nearVerticalEdge = nearTopEdge || nearBottomEdge;
-        
-        return nearHorizontalEdge && nearVerticalEdge;
+    {
+      const edgeMarginX = templateType === 50 ? width * 0.32 : width * 0.28;
+      const edgeMarginY = templateType === 50 ? height * 0.32 : height * 0.28;
+
+      const edgeFiltered = merged.filter(c => {
+        const nearH = c.x < edgeMarginX || c.x > width  - edgeMarginX;
+        const nearV = c.y < edgeMarginY || c.y > height - edgeMarginY;
+        return nearH && nearV;
       });
-      
-      console.log(`[OMR] 100-item edge filter: ${merged.length} → ${filteredCandidates.length} candidates`);
-      
-      // If edge filtering removed too many, fall back to all candidates
-      if (filteredCandidates.length < 4) {
-        console.log('[OMR] Edge filter too aggressive, using all candidates');
-        filteredCandidates = merged;
+
+      console.log(`[OMR] Edge filter (${templateType}-item): ${merged.length} → ${edgeFiltered.length} candidates`);
+
+      // Only apply if we still have at least 4 candidates
+      if (edgeFiltered.length >= 4) {
+        filteredCandidates = edgeFiltered;
+      } else {
+        console.log('[OMR] Edge filter too aggressive, keeping all candidates');
       }
     }
 
@@ -1357,56 +1323,42 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             // Allow more skew tolerance (up to 15% instead of 8%)
             if (leftXDiff > 0.15 || rightXDiff > 0.15 || topYDiff > 0.15 || botYDiff > 0.15) continue;
             
-            // Score: product of individual marker scores × rectangle quality
+            // ── Scoring ──
+            // Primary driver: area of the rectangle (larger = more likely to be
+            // the true outer corner markers, not inner section squares).
+            // Multiply by individual marker quality and rectangle regularity.
             const rectQuality = wRatio * hRatio;
-            
-            // For 100-item templates, add aspect ratio bonus - prefer rectangles closer to expected 0.91
+            const areaFraction = (avgW * avgH) / (width * height); // 0–1
+
+            // For 100-item templates, add aspect ratio bonus
             let aspectBonus = 1.0;
             if (templateType === 100) {
-              // Target aspect is 0.91, penalize deviation
               const expectedAspect = 0.91;
               const aspectDiff = Math.abs(aspect - expectedAspect);
-              aspectBonus = Math.max(0.5, 1.0 - aspectDiff); // Penalty increases with distance from 0.91
+              aspectBonus = Math.max(0.5, 1.0 - aspectDiff);
             }
-            
-            // For 100-item templates, check if bottom markers are at approximately
-            // the right position (should be around 70-80% down from top markers if paper fills most of frame)
-            // The key insight: bottom markers should NOT be at the image bottom
+
+            // Position bonus for 100-item (bottom markers not at very bottom)
             let positionBonus = 1.0;
             if (templateType === 100) {
-              // Check if bottom markers are in the expected vertical range
-              // If paper fills frame, bottom markers should be at ~75% of image height
-              // But if there's background below, they could be higher
               const bottomY = (bl.y + br.y) / 2;
-              const topY = (tl.y + tr.y) / 2;
-              const markerFrameHeight = bottomY - topY;
-              
-              // For 100-item, the marker frame should be taller than wide (aspect ~0.91)
-              // If the frame height is less than ~60% of image height, likely wrong markers
-              const frameHeightRatio = markerFrameHeight / height;
-              
-              // Bottom markers should be in the range 50-90% of image height
-              // (They can't be at the very bottom because there's page content below)
-              const bottomYRatio = bottomY / height;
-              
-              // Prefer rectangles where:
-              // 1. Bottom markers are NOT at the very bottom of the image (< 95%)
-              // 2. The frame height is at least 40% of the image
-              if (bottomYRatio > 0.95) {
-                positionBonus = 0.3; // Penalize if bottom markers are at image edge
-              } else if (bottomYRatio < 0.50) {
-                positionBonus = 0.5; // Penalize if bottom markers are too high
-              } else if (frameHeightRatio < 0.35) {
-                positionBonus = 0.4; // Penalize very small frames
-              } else {
-                // Good position - bonus based on how close to expected
-                positionBonus = 1.0 + (frameHeightRatio * 0.5); // Prefer larger frames
-              }
+              const topY2   = (tl.y + tr.y) / 2;
+              const frameHeightRatio = (bottomY - topY2) / height;
+              const bottomYRatio     = bottomY / height;
+              if (bottomYRatio > 0.95)      positionBonus = 0.3;
+              else if (bottomYRatio < 0.50) positionBonus = 0.5;
+              else if (frameHeightRatio < 0.35) positionBonus = 0.4;
+              else positionBonus = 1.0 + frameHeightRatio * 0.5;
             }
-            
-            // Prefer larger rectangles but with position bonus and aspect bonus for 100-item
-            const areaBonus = avgW * avgH / (width * height);
-            const totalScore = (tl.score + tr.score + bl.score + br.score) * rectQuality * areaBonus * positionBonus * aspectBonus;
+
+            // Area is raised to the power of 2 so that a rectangle that is 10%
+            // larger in each dimension (21% more area) scores ~44% better,
+            // strongly preferring the outermost (correct) corner markers.
+            const totalScore = (tl.score + tr.score + bl.score + br.score)
+              * rectQuality
+              * Math.pow(areaFraction, 2)
+              * positionBonus
+              * aspectBonus;
             
             if (totalScore > bestRectScore) {
               bestRectScore = totalScore;
@@ -1792,51 +1744,26 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       );
     }
 
-    // 1b. CLAHE-style contrast normalisation — per-tile stretch (64×64 tiles, bilinear blend)
-    // More robust than a single global stretch: handles dark/bright corners independently.
-    const TILE = 64;
-    const tW = Math.ceil(width / TILE);
-    const tH = Math.ceil(height / TILE);
-    const tileMin = new Float32Array(tW * tH);
-    const tileMax = new Float32Array(tW * tH);
-
-    for (let ty = 0; ty < tH; ty++) {
-      for (let tx = 0; tx < tW; tx++) {
-        const tileSamples: number[] = [];
-        const x1 = tx * TILE, x2 = Math.min(width, (tx + 1) * TILE);
-        const y1 = ty * TILE, y2 = Math.min(height, (ty + 1) * TILE);
-        for (let y = y1; y < y2; y += 2) {
-          for (let x = x1; x < x2; x += 2) {
-            tileSamples.push(rawGrayscale[y * width + x]);
-          }
-        }
-        tileSamples.sort((a, b) => a - b);
-        tileMin[ty * tW + tx] = tileSamples[Math.floor(tileSamples.length * 0.02)];
-        tileMax[ty * tW + tx] = tileSamples[Math.floor(tileSamples.length * 0.98)];
-      }
+    // 1b. Global contrast stretch (2nd–98th percentile) for bubble sampling.
+    // Simple and predictable — keeps paper white and ink black without the
+    // per-tile inversion artefact that per-tile CLAHE caused on dark backgrounds.
+    const sortSample: number[] = [];
+    const sampleStep = Math.max(1, Math.floor(rawGrayscale.length / 10000));
+    for (let i = 0; i < rawGrayscale.length; i += sampleStep) {
+      sortSample.push(rawGrayscale[i]);
     }
+    sortSample.sort((a, b) => a - b);
+    const gMin = sortSample[Math.floor(sortSample.length * 0.02)];
+    const gMax = sortSample[Math.floor(sortSample.length * 0.98)];
+    const gRange = Math.max(1, gMax - gMin);
 
     const grayscale = new Uint8Array(width * height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        // Bilinear interpolation of tile min/max
-        const txf = x / TILE - 0.5, tyf = y / TILE - 0.5;
-        const tx0 = Math.max(0, Math.floor(txf)), ty0 = Math.max(0, Math.floor(tyf));
-        const tx1 = Math.min(tW - 1, tx0 + 1),   ty1 = Math.min(tH - 1, ty0 + 1);
-        const fx = Math.max(0, Math.min(1, txf - tx0));
-        const fy = Math.max(0, Math.min(1, tyf - ty0));
-        const interp = (arr: Float32Array) =>
-          arr[ty0 * tW + tx0] * (1 - fx) * (1 - fy) +
-          arr[ty0 * tW + tx1] *      fx  * (1 - fy) +
-          arr[ty1 * tW + tx0] * (1 - fx) *      fy  +
-          arr[ty1 * tW + tx1] *      fx  *      fy;
-        const lo = interp(tileMin), hi = interp(tileMax);
-        const range = Math.max(30, hi - lo);
-        const v = rawGrayscale[y * width + x];
-        grayscale[y * width + x] = Math.max(0, Math.min(255, Math.round(((v - lo) / range) * 255)));
-      }
+    for (let i = 0; i < rawGrayscale.length; i++) {
+      grayscale[i] = Math.max(0, Math.min(255,
+        Math.round(((rawGrayscale[i] - gMin) / gRange) * 255)
+      ));
     }
-    console.log(`[OMR] CLAHE normalisation: tiles=${tW}x${tH}`);
+    console.log(`[OMR] Contrast stretch: min=${gMin} max=${gMax} range=${gRange}`);
 
     // 2. Find corner alignment markers using RAW grayscale (before contrast normalization)
     // This avoids shadows/noise being amplified into false marker candidates
