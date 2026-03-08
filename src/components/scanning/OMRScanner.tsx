@@ -286,6 +286,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
   // ── Lightweight marker detection for live video frames ──
   // Runs on a downscaled version of the guide-frame crop.
+  // Uses an integral image for fast region averages and a stricter
+  // uniformity + contrast check to reduce false positives.
   // Returns true if 4 dark squares are found in approximately the right positions.
   const detectMarkersInFrame = useCallback((): boolean => {
     if (!videoRef.current || !scanCanvasRef.current) return false;
@@ -302,8 +304,8 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return false;
     
-    // Use ~320px wide for better detection accuracy
-    const targetW = 320;
+    // Use 480px wide for better accuracy while staying fast
+    const targetW = 480;
     const scale = targetW / (crop.w * vw);
     const dw = Math.round(crop.w * vw * scale);
     const dh = Math.round(crop.h * vh * scale);
@@ -327,80 +329,95 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       const idx = i * 4;
       gray[i] = Math.round(pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114);
     }
-    
-    // Marker is ~3.3% of paper width → ~10px at 320px wide
-    const markerSize = Math.max(6, Math.round(dw * 0.035));
-    const half = Math.floor(markerSize / 2);
-    const step = Math.max(2, Math.floor(markerSize / 3));
-    
-    const avgBrightness = (x1: number, y1: number, x2: number, y2: number): number => {
-      x1 = Math.max(0, Math.floor(x1));
-      y1 = Math.max(0, Math.floor(y1));
-      x2 = Math.min(dw, Math.floor(x2));
-      y2 = Math.min(dh, Math.floor(y2));
-      if (x2 <= x1 || y2 <= y1) return 255;
-      let sum = 0, count = 0;
-      for (let py = y1; py < y2; py += 2) {
-        for (let px = x1; px < x2; px += 2) {
-          sum += gray[py * dw + px];
-          count++;
-        }
+
+    // ── Build integral image for O(1) rectangular averages ──
+    const integral = new Float32Array((dw + 1) * (dh + 1));
+    for (let y = 0; y < dh; y++) {
+      let rowSum = 0;
+      for (let x = 0; x < dw; x++) {
+        rowSum += gray[y * dw + x];
+        integral[(y + 1) * (dw + 1) + (x + 1)] = integral[y * (dw + 1) + (x + 1)] + rowSum;
       }
-      return count > 0 ? sum / count : 255;
+    }
+    const rectAvgLive = (x1: number, y1: number, x2: number, y2: number): number => {
+      x1 = Math.max(0, Math.floor(x1)); y1 = Math.max(0, Math.floor(y1));
+      x2 = Math.min(dw, Math.floor(x2)); y2 = Math.min(dh, Math.floor(y2));
+      const area = (x2 - x1) * (y2 - y1);
+      if (area <= 0) return 255;
+      const sum = integral[y2 * (dw + 1) + x2] - integral[y1 * (dw + 1) + x2]
+                - integral[y2 * (dw + 1) + x1] + integral[y1 * (dw + 1) + x1];
+      return sum / area;
     };
+
+    // Adaptive threshold: normalize global brightness to handle dark/bright scenes
+    const globalBrightness = rectAvgLive(0, 0, dw, dh);
+    // A "dark enough" marker: below 55% of global brightness
+    const darkThreshold = Math.min(100, globalBrightness * 0.55);
+    // A "bright enough" paper ring: above 65% of global brightness
+    const brightThreshold = Math.max(110, globalBrightness * 0.65);
+
+    // Marker is ~3.3% of paper width → ~15px at 480px wide
+    const markerSize = Math.max(8, Math.round(dw * 0.033));
+    const half = Math.floor(markerSize / 2);
+    // Use fine step (1/4 of marker size) for better sub-pixel coverage
+    const step = Math.max(2, Math.floor(markerSize / 4));
     
-    // Define search regions for each corner.
-    // For rotated sheets (up to ~30°), markers may shift from their expected positions.
-    // Expand search regions to accommodate rotation.
-    // For 100-item: bottom markers are at ~75% of page height, not at the page bottom.
-    // The guide frame crops the full page, so bottom markers are at ~75% of frame height.
     const t = getTemplateType();
-    // Increase margin for rotated sheets - markers can shift horizontally
-    const margin = Math.round(dw * 0.30); // 30% of width for horizontal search (increased from 20%)
-    const topH = Math.round(dh * 0.30);   // top 30% for top markers (increased from 20%)
-    
-    // Bottom markers: for 100-item, they're at ~75% down (markers at Y=222 on 297mm page)
-    // Search from 50% to 95% of frame height for 100-item, bottom 40% for others
-    const botY1 = t === 100 ? Math.round(dh * 0.50) : Math.round(dh * 0.60);
-    const botY2 = t === 100 ? Math.round(dh * 0.95) : dh;
+    // Generous search windows — accommodate up to ~30° tilt
+    const marginX = Math.round(dw * 0.32);
+    const topH = Math.round(dh * 0.32);
+    const botY1 = t === 100 ? Math.round(dh * 0.48) : Math.round(dh * 0.58);
+    const botY2 = t === 100 ? Math.round(dh * 0.96) : dh;
     
     const cornerRegions = [
-      { name: 'TL', x1: 0, y1: 0, x2: margin, y2: topH },
-      { name: 'TR', x1: dw - margin, y1: 0, x2: dw, y2: topH },
-      { name: 'BL', x1: 0, y1: botY1, x2: margin, y2: botY2 },
-      { name: 'BR', x1: dw - margin, y1: botY1, x2: dw, y2: botY2 },
+      { name: 'TL', x1: 0,            y1: 0,    x2: marginX,      y2: topH },
+      { name: 'TR', x1: dw - marginX, y1: 0,    x2: dw,           y2: topH },
+      { name: 'BL', x1: 0,            y1: botY1, x2: marginX,     y2: botY2 },
+      { name: 'BR', x1: dw - marginX, y1: botY1, x2: dw,          y2: botY2 },
     ];
     
     let cornersFound = 0;
     const foundCorners: string[] = [];
     
     for (const region of cornerRegions) {
-      let found = false;
-      for (let cy = region.y1 + half + 1; cy < region.y2 - half - 1 && !found; cy += step) {
-        for (let cx = region.x1 + half + 1; cx < region.x2 - half - 1 && !found; cx += step) {
-          // Check if this spot is dark (potential marker)
-          const inner = avgBrightness(cx - half, cy - half, cx + half, cy + half);
-          if (inner > 100) continue; // relaxed from 90
+      let bestContrast = 0;
+
+      for (let cy = region.y1 + half + 2; cy < region.y2 - half - 2; cy += step) {
+        for (let cx = region.x1 + half + 2; cx < region.x2 - half - 2; cx += step) {
+          // 1. Interior must be dark
+          const inner = rectAvgLive(cx - half, cy - half, cx + half, cy + half);
+          if (inner > darkThreshold) continue;
+
+          // 2. Uniformity: all 4 quadrants of the marker must be consistently dark
+          //    (rejects isolated dark pixels that aren't solid squares)
+          const q1 = rectAvgLive(cx - half, cy - half, cx, cy);
+          const q2 = rectAvgLive(cx,         cy - half, cx + half, cy);
+          const q3 = rectAvgLive(cx - half, cy,         cx, cy + half);
+          const q4 = rectAvgLive(cx,         cy,         cx + half, cy + half);
+          if (Math.max(q1, q2, q3, q4) - Math.min(q1, q2, q3, q4) > 45) continue;
+
+          // 3. Paper ring: at least 3 of 4 sides must be bright
+          //    (ensures we're on paper, not a dark desk corner)
+          const ringInner = Math.floor(half * 1.4);
+          const ringOuter = Math.floor(half * 2.8);
+          const tB = rectAvgLive(cx - ringOuter, cy - ringOuter, cx + ringOuter, cy - ringInner);
+          const bB = rectAvgLive(cx - ringOuter, cy + ringInner, cx + ringOuter, cy + ringOuter);
+          const lB = rectAvgLive(cx - ringOuter, cy - ringInner, cx - ringInner, cy + ringInner);
+          const rB = rectAvgLive(cx + ringInner, cy - ringInner, cx + ringOuter, cy + ringInner);
           
-          // Check surrounding brightness (should be paper = bright)
-          const ring = Math.max(half + 2, Math.floor(half * 1.8));
-          const topB = avgBrightness(cx - ring, Math.max(0, cy - ring), cx + ring, cy - half);
-          const botB = avgBrightness(cx - ring, cy + half, cx + ring, Math.min(dh, cy + ring));
-          const leftB = avgBrightness(Math.max(0, cx - ring), cy - half, cx - half, cy + half);
-          const rightB = avgBrightness(cx + half, cy - half, Math.min(dw, cx + ring), cy + half);
-          
-          // At least 2 of 4 sides must be bright (paper)
-          const brightCount = (topB > 130 ? 1 : 0) + (botB > 130 ? 1 : 0) + 
-                              (leftB > 130 ? 1 : 0) + (rightB > 130 ? 1 : 0);
-          if (brightCount < 2) continue;
-          
-          const borderAvg = (topB + botB + leftB + rightB) / 4;
-          if (borderAvg - inner > 40) { // relaxed from 50
-            found = true;
-          }
+          const brightSides = (tB > brightThreshold ? 1 : 0) + (bB > brightThreshold ? 1 : 0)
+                             + (lB > brightThreshold ? 1 : 0) + (rB > brightThreshold ? 1 : 0);
+          // Require 3-of-4 bright sides (corner markers sit near paper edge, so 1 dark side OK)
+          if (brightSides < 3) continue;
+
+          // 4. Contrast check
+          const borderAvg = (tB + bB + lB + rB) / 4;
+          const contrast = borderAvg - inner;
+          if (contrast > bestContrast) bestContrast = contrast;
         }
       }
-      if (found) {
+
+      if (bestContrast > 55) {
         cornersFound++;
         foundCorners.push(region.name);
       }
@@ -408,7 +425,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     // Log periodically for debugging (every ~2 seconds at 6fps)
     if (Math.random() < 0.08) {
-      console.log(`[LiveScan] ${dw}x${dh} markerSize=${markerSize} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
+      console.log(`[LiveScan] ${dw}x${dh} markerSz=${markerSize} darkThr=${darkThreshold.toFixed(0)} found=${foundCorners.join(',')||'none'} (${cornersFound}/4)`);
     }
     
     return cornersFound >= 4;
@@ -485,98 +502,97 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ─── SKEW DETECTION AND CORRECTION ───
-  // Detects rotation angle up to ±30° and corrects it using Hough-like line detection
-  // on the edges of the paper/markers.
+  // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
+  // Uses 0.25° bins (241 bins total) for sub-degree accuracy.
+  // Only edges with high magnitude vote, and votes are weighted by magnitude so strong
+  // long edges (paper boundary, column separators) dominate over noise.
   const detectSkewAngle = (grayscale: Uint8Array, width: number, height: number): number => {
-    // Use Sobel edge detection to find strong horizontal/vertical edges
-    // Then accumulate angles in a histogram to find dominant angle
+    const BINS = 241;              // –30° to +30° in 0.25° steps
+    const CENTER = 120;            // bin index for 0°
+    const SCALE = 4;               // bins per degree (1 / 0.25)
+    const angleHist = new Float32Array(BINS);
     
-    const angleHist = new Float32Array(121); // -30 to +30 degrees in 0.5° steps
-    const centerAngle = 60; // Index 60 = 0 degrees
-    
-    // Sample a grid of points and measure local edge direction
-    const step = Math.max(4, Math.floor(Math.min(width, height) / 100));
+    // Sample a grid of points; denser sampling = more accurate but slower.
+    // Use ~200 sample rows (capped for large images).
+    const step = Math.max(3, Math.floor(Math.min(width, height) / 200));
+    // Edge magnitude threshold — only vote for genuinely strong edges (reduces noise)
+    const EDGE_THRESH = 40;
     
     for (let y = step; y < height - step; y += step) {
       for (let x = step; x < width - step; x += step) {
-        // Sobel gradients
+        // 3×3 Sobel
         const gx = 
           -grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[y * width + (x - 1)] - grayscale[(y + 1) * width + (x - 1)] +
-          grayscale[(y - 1) * width + (x + 1)] + 2 * grayscale[y * width + (x + 1)] + grayscale[(y + 1) * width + (x + 1)];
+           grayscale[(y - 1) * width + (x + 1)] + 2 * grayscale[y * width + (x + 1)] + grayscale[(y + 1) * width + (x + 1)];
         
         const gy = 
           -grayscale[(y - 1) * width + (x - 1)] - 2 * grayscale[(y - 1) * width + x] - grayscale[(y - 1) * width + (x + 1)] +
-          grayscale[(y + 1) * width + (x - 1)] + 2 * grayscale[(y + 1) * width + x] + grayscale[(y + 1) * width + (x + 1)];
+           grayscale[(y + 1) * width + (x - 1)] + 2 * grayscale[(y + 1) * width + x] + grayscale[(y + 1) * width + (x + 1)];
         
         const magnitude = Math.sqrt(gx * gx + gy * gy);
+        if (magnitude < EDGE_THRESH) continue;
         
-        // Only consider strong edges
-        if (magnitude < 50) continue;
-        
-        // Calculate angle in degrees (-90 to +90)
-        let angle = Math.atan2(gy, gx) * 180 / Math.PI;
-        
-        // We're interested in angles close to 0 (horizontal) or 90 (vertical)
-        // which correspond to paper edges. Normalize to -30 to +30 range.
-        // Horizontal edges: angle ≈ 90 or -90 → paper rotation
-        // Vertical edges: angle ≈ 0 or 180 → paper rotation
-        
-        // For horizontal edges (gy dominant): rotation = angle - 90 (or + 90)
-        // For vertical edges (gx dominant): rotation = angle
-        
+        // Derive rotation angle from edge direction
+        // Horizontal edges (gy dominant): edge angle ≈ ±90° → paper rotated by (angle − 90°)
+        // Vertical edges (gx dominant):  edge angle ≈ 0°/180° → paper rotated by edge angle
+        let angle = Math.atan2(gy, gx) * 180 / Math.PI; // –180..+180
         let rotation: number;
-        if (Math.abs(gx) > Math.abs(gy)) {
-          // Vertical edge - angle should be near 0 or ±180
+        if (Math.abs(gx) >= Math.abs(gy)) {
+          // Vertical edge
           rotation = angle;
           if (rotation > 90) rotation -= 180;
           if (rotation < -90) rotation += 180;
         } else {
-          // Horizontal edge - angle should be near ±90
+          // Horizontal edge
           rotation = angle > 0 ? angle - 90 : angle + 90;
         }
         
-        // Clamp to ±30° range
         if (rotation < -30 || rotation > 30) continue;
         
-        // Add to histogram with weighted magnitude
-        const histIdx = Math.round((rotation + 30) * 2); // -30 → 0, 0 → 60, +30 → 120
-        if (histIdx >= 0 && histIdx < 121) {
-          angleHist[histIdx] += magnitude;
+        const binIdx = Math.round((rotation + 30) * SCALE);
+        if (binIdx >= 0 && binIdx < BINS) {
+          angleHist[binIdx] += magnitude; // weight by edge strength
         }
       }
     }
     
-    // Find the peak in the histogram (with smoothing)
-    let maxVal = 0;
-    let maxIdx = centerAngle;
-    
-    for (let i = 2; i < 119; i++) {
-      // Gaussian smoothing kernel
-      const smoothed = angleHist[i - 2] * 0.1 + angleHist[i - 1] * 0.2 + 
-                       angleHist[i] * 0.4 + angleHist[i + 1] * 0.2 + angleHist[i + 2] * 0.1;
-      if (smoothed > maxVal) {
-        maxVal = smoothed;
-        maxIdx = i;
+    // Gaussian-smooth the histogram (σ ≈ 2 bins = 0.5°) then find peak
+    const smoothed = new Float32Array(BINS);
+    const kernel = [0.06, 0.12, 0.22, 0.40, 0.22, 0.12, 0.06]; // σ≈1.5 bins, sum≈1.2→renorm below
+    const kCenter = 3;
+    for (let i = 0; i < BINS; i++) {
+      let acc = 0;
+      for (let k = 0; k < kernel.length; k++) {
+        const j = i + k - kCenter;
+        if (j >= 0 && j < BINS) acc += angleHist[j] * kernel[k];
       }
+      smoothed[i] = acc;
     }
+
+    let maxVal = 0, maxIdx = CENTER;
+    for (let i = 0; i < BINS; i++) {
+      if (smoothed[i] > maxVal) { maxVal = smoothed[i]; maxIdx = i; }
+    }
+
+    // Sub-bin parabolic interpolation for extra precision
+    let subBin = maxIdx;
+    if (maxIdx > 0 && maxIdx < BINS - 1) {
+      const left = smoothed[maxIdx - 1], right = smoothed[maxIdx + 1];
+      const denom = left - 2 * maxVal + right;
+      if (Math.abs(denom) > 1e-6) subBin = maxIdx - (right - left) / (2 * denom);
+    }
+
+    const detectedAngle = (subBin - CENTER) / SCALE;
     
-    const detectedAngle = (maxIdx - centerAngle) / 2; // Convert back to degrees
-    
-    // Only return angle if there's significant evidence
     const totalVotes = angleHist.reduce((a, b) => a + b, 0);
     const peakStrength = maxVal / (totalVotes || 1);
     
-    console.log(`[Skew] Detected angle: ${detectedAngle.toFixed(1)}° (peak strength: ${(peakStrength * 100).toFixed(1)}%)`);
+    console.log(`[Skew] Detected angle: ${detectedAngle.toFixed(2)}° (peak strength: ${(peakStrength * 100).toFixed(1)}%)`);
     
-    // If peak is weak, don't rotate
-    if (peakStrength < 0.05) {
-      return 0;
-    }
-    
-    // If angle is very small (< 1°), skip rotation
-    if (Math.abs(detectedAngle) < 1) {
-      return 0;
-    }
+    // Require a meaningful peak to avoid spurious corrections
+    if (peakStrength < 0.04) return 0;
+    // Skip imperceptible sub-0.5° rotations (saves a canvas copy operation)
+    if (Math.abs(detectedAngle) < 0.5) return 0;
     
     return detectedAngle;
   };
@@ -637,18 +653,20 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     const angle = detectSkewAngle(grayscale, w, h);
     
-    if (Math.abs(angle) < 1) {
-      console.log('[Skew] No significant skew detected');
+    if (Math.abs(angle) < 0.5) {
+      console.log('[Skew] No significant skew detected (< 0.5°)');
       return srcCanvas;
     }
     
+    console.log(`[Skew] Correcting by ${angle.toFixed(2)}°`);
     return rotateCanvas(srcCanvas, angle);
   };
 
-  // ─── IMAGE ENHANCEMENT: Adaptive brightness (no perspective warp) ───
-  // Normalizes lighting across the image to handle shadows and uneven illumination.
-  // Does NOT warp or distort the image — perspective correction is handled by
-  // the 4-corner marker system in detectBubbles.
+  // ─── IMAGE ENHANCEMENT: Adaptive brightness + unsharp-mask sharpening ───
+  // 1. Adaptive brightness (local grid normalisation) handles shadows/uneven illumination.
+  // 2. Unsharp-mask sharpening accentuates bubble edges so the ink contrast is
+  //    crisp even for light pencil marks. Does NOT warp the image — perspective
+  //    correction is handled by the 4-corner marker system in detectBubbles.
   const enhanceImage = (srcCanvas: HTMLCanvasElement): HTMLCanvasElement => {
     const ctx = srcCanvas.getContext('2d');
     if (!ctx) return srcCanvas;
@@ -667,12 +685,13 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const imgData = outCtx.getImageData(0, 0, w, h);
     const d = imgData.data;
     
-    // Adaptive brightness enhancement using a local grid
-    // Each grid cell finds the local "paper white" level and scales up so paper → 245
-    const gridSize = 48; // larger grid = smoother transitions between cells
+    // ── Pass 1: Adaptive brightness normalisation ──
+    // Each grid cell finds the local "paper white" level and scales it to 245.
+    const gridSize = 40; // smaller grid → tighter local normalisation
     const gW = Math.ceil(w / gridSize);
     const gH = Math.ceil(h / gridSize);
     const gridWhite = new Float32Array(gW * gH);
+    const gridBlack = new Float32Array(gW * gH);
     
     for (let gy = 0; gy < gH; gy++) {
       for (let gx = 0; gx < gW; gx++) {
@@ -686,15 +705,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
           }
         }
         samples.sort((a, b) => a - b);
-        // Use 85th percentile as "local paper white" (avoids being pulled up by specular highlights)
-        gridWhite[gy * gW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.85)] : 200;
+        // 88th percentile → local paper white (avoids specular highlights)
+        gridWhite[gy * gW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.88)] : 200;
+        // 5th percentile → local ink black (anchors the dark end)
+        gridBlack[gy * gW + gx] = samples.length > 0 ? samples[Math.floor(samples.length * 0.05)] : 0;
       }
     }
     
-    // Apply with bilinear interpolation between grid cells for smooth result
+    // Apply with bilinear interpolation for smooth transitions
     for (let py = 0; py < h; py++) {
       for (let px = 0; px < w; px++) {
-        // Find the four surrounding grid cells and interpolate
         const gxf = px / gridSize - 0.5;
         const gyf = py / gridSize - 0.5;
         const gx0 = Math.max(0, Math.floor(gxf));
@@ -704,25 +724,78 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         const fx = Math.max(0, Math.min(1, gxf - gx0));
         const fy = Math.max(0, Math.min(1, gyf - gy0));
         
+        // Bilinear white level
         const w00 = gridWhite[gy0 * gW + gx0];
         const w10 = gridWhite[gy0 * gW + gx1];
         const w01 = gridWhite[gy1 * gW + gx0];
         const w11 = gridWhite[gy1 * gW + gx1];
-        const localWhite = w00 * (1 - fx) * (1 - fy) + w10 * fx * (1 - fy) + w01 * (1 - fx) * fy + w11 * fx * fy;
+        const localWhite = w00 * (1 - fx) * (1 - fy) + w10 * fx * (1 - fy) +
+                           w01 * (1 - fx) * fy       + w11 * fx * fy;
+        // Bilinear black level
+        const b00 = gridBlack[gy0 * gW + gx0];
+        const b10 = gridBlack[gy0 * gW + gx1];
+        const b01 = gridBlack[gy1 * gW + gx0];
+        const b11 = gridBlack[gy1 * gW + gx1];
+        const localBlack = b00 * (1 - fx) * (1 - fy) + b10 * fx * (1 - fy) +
+                           b01 * (1 - fx) * fy        + b11 * fx * fy;
         
-        const safeWhite = Math.max(80, localWhite);
-        const scale = 245 / safeWhite;
+        // Linear stretch: black → 10, white → 245
+        const safeRange = Math.max(30, localWhite - localBlack);
         
         const i = (py * w + px) * 4;
-        d[i] = Math.min(255, Math.round(d[i] * scale));
-        d[i + 1] = Math.min(255, Math.round(d[i + 1] * scale));
-        d[i + 2] = Math.min(255, Math.round(d[i + 2] * scale));
+        for (let c = 0; c < 3; c++) {
+          const normalized = ((d[i + c] - localBlack) / safeRange) * 235 + 10;
+          d[i + c] = Math.max(0, Math.min(255, Math.round(normalized)));
+        }
       }
     }
-    
+
     outCtx.putImageData(imgData, 0, 0);
-    console.log(`[Enhance] Applied adaptive brightness: ${w}x${h}, grid=${gridSize}px`);
-    return outCanvas;
+
+    // ── Pass 2: Unsharp mask (Amount=0.8, Radius≈1px, Threshold=4) ──
+    // Sharpens bubble edges so ink marks are well-defined for the threshold detector.
+    // We do this on a second copy to avoid accumulating rounding errors.
+    const sharpCanvas = document.createElement('canvas');
+    sharpCanvas.width = w;
+    sharpCanvas.height = h;
+    const sCtx = sharpCanvas.getContext('2d');
+    if (!sCtx) {
+      console.log(`[Enhance] Brightness done (${w}x${h}), sharpening skipped`);
+      return outCanvas;
+    }
+    sCtx.drawImage(outCanvas, 0, 0);
+
+    // Create blurred version using a tiny box blur (radius 1) applied twice
+    // to approximate a Gaussian — fast and good enough for unsharp mask.
+    const blurCanvas = document.createElement('canvas');
+    blurCanvas.width = w;
+    blurCanvas.height = h;
+    const bCtx = blurCanvas.getContext('2d');
+    if (!bCtx) return outCanvas;
+    bCtx.filter = 'blur(1.2px)';
+    bCtx.drawImage(outCanvas, 0, 0);
+    bCtx.filter = 'none';
+
+    const sharpData = sCtx.getImageData(0, 0, w, h);
+    const blurData  = bCtx.getImageData(0, 0, w, h);
+    const sd = sharpData.data;
+    const bd = blurData.data;
+
+    const AMOUNT = 0.9;      // sharpening strength (0 = none, 1 = full, >1 = over-sharpen)
+    const THRESHOLD = 4;     // only sharpen if blurred pixel differs by this much
+
+    for (let i = 0; i < sd.length; i += 4) {
+      for (let c = 0; c < 3; c++) {
+        const diff = sd[i + c] - bd[i + c];
+        if (Math.abs(diff) >= THRESHOLD) {
+          sd[i + c] = Math.max(0, Math.min(255, Math.round(sd[i + c] + AMOUNT * diff)));
+        }
+      }
+    }
+    sCtx.putImageData(sharpData, 0, 0);
+
+    console.log(`[Enhance] Brightness + sharpening done: ${w}x${h}, grid=${gridSize}px`);
+    return sharpCanvas;
   };
 
   // Process the captured image using OMR
@@ -1097,7 +1170,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     for (const size of sizes) {
       const half = Math.floor(size / 2);
-      const step = Math.max(3, Math.floor(size / 2));
+      // Use 1/3 of marker size as step — finer than before (was 1/2) so we don't
+      // accidentally stride over a marker that sits between two step positions.
+      const step = Math.max(2, Math.floor(size / 3));
 
       for (let cy = half + 2; cy < height - half - 2; cy += step) {
         for (let cx = half + 2; cx < width - half - 2; cx += step) {
@@ -1717,23 +1792,51 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       );
     }
 
-    // 1b. Contrast normalization — stretches the histogram to use the full 0-255 range
-    // This helps when the image has poor lighting (shadows, dim environment)
-    const sortSample: number[] = [];
-    const sampleStep = Math.max(1, Math.floor(rawGrayscale.length / 10000));
-    for (let i = 0; i < rawGrayscale.length; i += sampleStep) {
-      sortSample.push(rawGrayscale[i]);
+    // 1b. CLAHE-style contrast normalisation — per-tile stretch (64×64 tiles, bilinear blend)
+    // More robust than a single global stretch: handles dark/bright corners independently.
+    const TILE = 64;
+    const tW = Math.ceil(width / TILE);
+    const tH = Math.ceil(height / TILE);
+    const tileMin = new Float32Array(tW * tH);
+    const tileMax = new Float32Array(tW * tH);
+
+    for (let ty = 0; ty < tH; ty++) {
+      for (let tx = 0; tx < tW; tx++) {
+        const tileSamples: number[] = [];
+        const x1 = tx * TILE, x2 = Math.min(width, (tx + 1) * TILE);
+        const y1 = ty * TILE, y2 = Math.min(height, (ty + 1) * TILE);
+        for (let y = y1; y < y2; y += 2) {
+          for (let x = x1; x < x2; x += 2) {
+            tileSamples.push(rawGrayscale[y * width + x]);
+          }
+        }
+        tileSamples.sort((a, b) => a - b);
+        tileMin[ty * tW + tx] = tileSamples[Math.floor(tileSamples.length * 0.02)];
+        tileMax[ty * tW + tx] = tileSamples[Math.floor(tileSamples.length * 0.98)];
+      }
     }
-    sortSample.sort((a, b) => a - b);
-    const gMin = sortSample[Math.floor(sortSample.length * 0.02)];
-    const gMax = sortSample[Math.floor(sortSample.length * 0.98)];
-    const gRange = Math.max(1, gMax - gMin);
 
     const grayscale = new Uint8Array(width * height);
-    for (let i = 0; i < rawGrayscale.length; i++) {
-      grayscale[i] = Math.max(0, Math.min(255, Math.round(((rawGrayscale[i] - gMin) / gRange) * 255)));
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        // Bilinear interpolation of tile min/max
+        const txf = x / TILE - 0.5, tyf = y / TILE - 0.5;
+        const tx0 = Math.max(0, Math.floor(txf)), ty0 = Math.max(0, Math.floor(tyf));
+        const tx1 = Math.min(tW - 1, tx0 + 1),   ty1 = Math.min(tH - 1, ty0 + 1);
+        const fx = Math.max(0, Math.min(1, txf - tx0));
+        const fy = Math.max(0, Math.min(1, tyf - ty0));
+        const interp = (arr: Float32Array) =>
+          arr[ty0 * tW + tx0] * (1 - fx) * (1 - fy) +
+          arr[ty0 * tW + tx1] *      fx  * (1 - fy) +
+          arr[ty1 * tW + tx0] * (1 - fx) *      fy  +
+          arr[ty1 * tW + tx1] *      fx  *      fy;
+        const lo = interp(tileMin), hi = interp(tileMax);
+        const range = Math.max(30, hi - lo);
+        const v = rawGrayscale[y * width + x];
+        grayscale[y * width + x] = Math.max(0, Math.min(255, Math.round(((v - lo) / range) * 255)));
+      }
     }
-    console.log(`[OMR] Contrast normalization: min=${gMin} max=${gMax} range=${gRange}`);
+    console.log(`[OMR] CLAHE normalisation: tiles=${tW}x${tH}`);
 
     // 2. Find corner alignment markers using RAW grayscale (before contrast normalization)
     // This avoids shadows/noise being amplified into false marker candidates
@@ -1788,12 +1891,16 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   };
 
   // ─── BUBBLE SAMPLING (grayscale-based) ───
-  // Returns the MEAN BRIGHTNESS of the bubble interior (0-255).
+  // Returns a WEIGHTED MEAN BRIGHTNESS of the bubble interior (0-255).
   // LOWER value = DARKER = MORE LIKELY FILLED.
-  // 
-  // We sample only the interior of the bubble and return raw brightness.
-  // Detection functions compare bubbles WITHIN the same column/question —
-  // the filled bubble will simply be much darker than unfilled ones.
+  //
+  // Strategy:
+  //  • Sample the inner 65% of the bubble radius (avoids the printed circle outline).
+  //  • Weight pixels with a 2D Gaussian centred on the bubble centre so that
+  //    a pencil mark anywhere inside — even if only at the centre — is detected,
+  //    while edge noise from the printed circle is down-weighted.
+  //  • Minimum-pool: return the min of the weighted mean and the darkest 10th-
+  //    percentile brightness so that a small but very dark mark is not averaged away.
   const sampleBubbleAt = (
     grayscale: Uint8Array,
     imgW: number,
@@ -1803,40 +1910,44 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     radiusX: number,
     radiusY: number
   ): number => {
-    // Sample the center of the bubble using an elliptical mask
-    // Use inner 50% to safely avoid the printed circle outline
-    let sum = 0, count = 0;
-    const innerRX = radiusX * 0.50;
-    const innerRY = radiusY * 0.50;
-    const step = Math.max(1, Math.floor(Math.min(innerRX, innerRY) / 4));
+    const innerRX = radiusX * 0.65;
+    const innerRY = radiusY * 0.65;
+    // Gaussian σ = half the inner radius; weight falls to ~14% at the edge
+    const sigX = innerRX * 0.5;
+    const sigY = innerRY * 0.5;
+    const step = Math.max(1, Math.floor(Math.min(innerRX, innerRY) / 5));
+
+    let wSum = 0, sum = 0;
+    const samples: number[] = [];
 
     for (let dy = -Math.ceil(innerRY); dy <= Math.ceil(innerRY); dy += step) {
       for (let dx = -Math.ceil(innerRX); dx <= Math.ceil(innerRX); dx += step) {
-        if (innerRX > 0 && innerRY > 0 && (dx * dx) / (innerRX * innerRX) + (dy * dy) / (innerRY * innerRY) > 1) continue;
+        if (innerRX > 0 && innerRY > 0 &&
+            (dx * dx) / (innerRX * innerRX) + (dy * dy) / (innerRY * innerRY) > 1) continue;
         const px = Math.round(cx + dx);
         const py = Math.round(cy + dy);
-        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          sum += grayscale[py * imgW + px];
-          count++;
-        }
+        if (px < 0 || px >= imgW || py < 0 || py >= imgH) continue;
+        const val = grayscale[py * imgW + px];
+        // Gaussian weight (higher at centre, tapering to edges)
+        const w = Math.exp(-0.5 * ((dx * dx) / (sigX * sigX + 1) + (dy * dy) / (sigY * sigY + 1)));
+        sum += val * w;
+        wSum += w;
+        samples.push(val);
       }
     }
 
-    // Also sample the exact center cross pattern for extra precision
-    // This catches small-pencil fills that are concentrated at center
-    for (let r = 0; r <= Math.floor(innerRX * 0.7); r++) {
-      for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
-        const px = Math.round(cx + dx);
-        const py = Math.round(cy + dy);
-        if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
-          sum += grayscale[py * imgW + px];
-          count++;
-        }
-      }
-    }
+    if (wSum === 0) return 255;
 
-    if (count === 0) return 255; // default = bright = unfilled
-    return sum / count; // raw brightness: low = dark = filled
+    const weightedMean = sum / wSum;
+
+    // Also compute the 10th-percentile brightness (darkest 10% of sampled pixels)
+    // so that a small but solidly-filled centre patch is not diluted.
+    samples.sort((a, b) => a - b);
+    const p10 = samples.length > 0 ? samples[Math.floor(samples.length * 0.10)] : 255;
+
+    // Return the lower (darker) of the two — catches both large-area fills and
+    // concentrated centre-only fills (e.g. short pencil strokes).
+    return Math.min(weightedMean, p10 * 0.85 + weightedMean * 0.15);
   };
 
   // ─── DETECT STUDENT ID ───
@@ -1901,36 +2012,35 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       let detectedDigit: number | null = null; // null means no detection (unshaded column)
       let hasDetection = false;
 
-      // Detection criteria (calibrated to 70% threshold):
-      // 1. The darkest bubble must be < 70% of the upper quartile brightness (30%+ drop)
-      //    This is stricter to avoid false positives from noise/dots
-      // 2. OR: the gap between darkest and 2nd-darkest must be > 15% of upper quartile
-      //    AND darkest < 85% of upper quartile (clear separation indicates intentional mark)
+      // ── Detection thresholds (calibrated for Gaussian-weighted sampler) ──
+      //
+      // sampleBubbleAt now returns a Gaussian-weighted mean blended with the p10
+      // darkest sample, so filled bubbles appear darker than before.
+      //
+      // Tier 1 – Strong fill (clear dark mark):
+      //   darkest < 68% of upper-quartile reference  → definite fill
+      // Tier 2 – Light fill (light pencil / faded ink):
+      //   darkest < 82% of upper-quartile  AND  gap to 2nd > 12% of reference
+      //   → probably intentional (stands out from neighbours)
       const darkRatio = upperQ > 20 ? darkest / upperQ : 1;
       const gapFromSecond = secondDark - darkest;
       const gapRatio = upperQ > 20 ? gapFromSecond / upperQ : 0;
 
-      // Primary detection: darkest must be significantly darker than unfilled (30% drop = 70% threshold)
-      if (darkRatio < 0.70) {
-        // Strong detection: darkest is much darker than unfilled
+      if (darkRatio < 0.68) {
         detectedDigit = fills.indexOf(darkest);
         hasDetection = true;
-      } else if (darkRatio < 0.85 && gapRatio > 0.15) {
-        // Moderate detection: darkest is somewhat dark AND clearly separated from 2nd
-        // Requires stronger gap (15% instead of 12%) to avoid light mark false positives
+      } else if (darkRatio < 0.82 && gapRatio > 0.12) {
         detectedDigit = fills.indexOf(darkest);
         hasDetection = true;
       }
 
       if (hasDetection && detectedDigit !== null) {
-        // Check for double-shade: is the 2nd-darkest ALSO significantly dark?
+        // Double-shade: 2nd-darkest is also quite dark AND close to darkest
         const secondRatio = upperQ > 20 ? secondDark / upperQ : 1;
         const gapBetweenTopTwo = upperQ > 20 ? gapFromSecond / upperQ : 1;
-        // Double shade if 2nd is also quite dark AND close to the darkest
-        if (secondRatio < 0.75 && gapBetweenTopTwo < 0.08) {
+        if (secondRatio < 0.76 && gapBetweenTopTwo < 0.09) {
           doubleShadeColumns.push(col + 1);
           console.log(`[ID] ⚠️ Col ${col} DOUBLE SHADE: darkest=${darkest.toFixed(0)} 2nd=${secondDark.toFixed(0)} upperQ=${upperQ.toFixed(0)}`);
-          // Mark as double-shade (-2) so it is excluded from cleanId and shown as '?' in UI
           idDigits.push(-2);
           continue;
         }
@@ -2015,31 +2125,29 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
         let selectedChoice = '';
 
-        // Use the brightest bubble as the "unfilled" reference
-        // For a 5-choice question, at most 1 is filled, so the brightest is a good reference
+        // Use the brightest bubble as the "unfilled" reference.
+        // For a row of N choices, at most 1 is filled — the brightest N-1 are unfilled.
         const ref = brightest;
         const darkRatio = ref > 20 ? darkest / ref : 1;
         const gapFromSecond = secondDark - darkest;
         const gapRatio = ref > 20 ? gapFromSecond / ref : 0;
 
-        // Detection with 70% threshold (calibrated to avoid false positives from noise):
-        // Primary: darkest must be < 70% of brightest (30%+ drop) - clear intentional mark
-        // Secondary: darkest < 85% of brightest AND strong gap from 2nd (15%+)
-        //            This catches lighter but intentional marks that stand out
-        if (darkRatio < 0.70) {
+        // ── Detection tiers (Gaussian-weighted sampler) ──
+        // Tier 1 – Strong fill:   darkest < 68% of brightest  → definite mark
+        // Tier 2 – Light fill:    darkest < 82% of brightest  AND gap to 2nd > 12%
+        //          → intentional light mark (pen nearly dry, hard-pressure pencil, etc.)
+        if (darkRatio < 0.68) {
           selectedChoice = sorted[0].choice;
-        } else if (darkRatio < 0.85 && gapRatio > 0.15) {
-          // Stricter gap requirement (was 0.10) to distinguish from noise
+        } else if (darkRatio < 0.82 && gapRatio > 0.12) {
           selectedChoice = sorted[0].choice;
         }
 
-        // Check for multiple answers
+        // Check for multiple answers (flag but still use darkest)
         if (selectedChoice) {
           const secondRatio = ref > 20 ? secondDark / ref : 1;
           const gapBetweenTopTwo = ref > 20 ? gapFromSecond / ref : 1;
-          // Multiple answers: 2nd darkest is also quite dark (<75%) AND close to darkest (<8% gap)
-          // Stricter thresholds to reduce false positives from background noise
-          if (secondRatio < 0.75 && gapBetweenTopTwo < 0.08) {
+          // Multiple answers: 2nd darkest is also quite dark (<76%) AND close to darkest (<9% gap)
+          if (secondRatio < 0.76 && gapBetweenTopTwo < 0.09) {
             multipleAnswers.push(q);
             console.log(`[MULTI] Q${q}: ${sorted.slice(0, 3).map(f => `${f.choice}=${f.brightness.toFixed(0)}`).join(', ')} ref=${ref.toFixed(0)}`);
           }
