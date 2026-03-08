@@ -545,10 +545,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // ZipGrade style:
-  //   • Solid black letterbox bars on sides (and top/bottom if needed)
-  //   • Camera feed visible only in the paper-shaped window — full brightness, no tint
-  //   • Green filled squares at detected corner marker positions
+  // Clean camera feed. Only draw green filled squares when markers are detected.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -564,37 +561,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    // ── Solid black letterbox bars ──
-    const t = getTemplateType();
-    const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
+    if (!liveMarkers) return;
 
-    let gw = vw;
-    let gh = gw / paperAspect;
-    if (gh > vh) { gh = vh; gw = gh * paperAspect; }
-    const gx = Math.round((vw - gw) / 2);
-    const gy = Math.round((vh - gh) / 2);
-    const gwR = Math.round(gw);
-    const ghR = Math.round(gh);
-
-    ctx.fillStyle = '#000000';
-    if (gy > 0) ctx.fillRect(0, 0, vw, gy);                              // top
-    if (gy + ghR < vh) ctx.fillRect(0, gy + ghR, vw, vh - (gy + ghR));    // bottom
-    if (gx > 0) ctx.fillRect(0, gy, gx, ghR);                            // left
-    if (gx + gwR < vw) ctx.fillRect(gx + gwR, gy, vw - (gx + gwR), ghR); // right
-
-    // ── Green filled squares when markers detected ──
-    if (liveMarkers) {
-      const sqSz = Math.round(Math.min(vw, vh) * 0.032);
-      const corners = [
-        { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
-        { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
-        { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
-        { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
-      ];
-      for (const c of corners) {
-        ctx.fillStyle = '#22c55e';
-        ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
-      }
+    // Green filled squares at detected corner positions
+    const sqSz = Math.round(Math.min(vw, vh) * 0.032);
+    const corners = [
+      { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
+      { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
+      { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
+      { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
+    ];
+    for (const c of corners) {
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
