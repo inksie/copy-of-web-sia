@@ -72,8 +72,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   const [markersDetected, setMarkersDetected] = useState(false);
   const [stabilizationProgress, setStabilizationProgress] = useState(0); // 0-100%
   const [alignmentError, setAlignmentError] = useState<string | null>(null);
-  // Live marker positions as fractions of the video element size (0-1), for overlay rendering
-  const [liveMarkers, setLiveMarkers] = useState<{ tl: {x:number;y:number}; tr: {x:number;y:number}; bl: {x:number;y:number}; br: {x:number;y:number} } | null>(null);
   const liveOverlayRef = useRef<HTMLCanvasElement>(null);
 
   // Keep streamRef in sync with stream state
@@ -499,24 +497,22 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     
     let frameCount = 0;
     let consecutiveDetections = 0;
-    // Need ~12-18 consecutive detections to trigger capture (2-3 seconds at 6fps)
-    // This gives users time to stabilize their phone before auto-capture
-    const REQUIRED_CONSECUTIVE = 15; // ~2.5 seconds of stable marker detection
+    // Need ~6-9 consecutive detections to trigger capture (1-1.5 seconds at 6fps)
+    const REQUIRED_CONSECUTIVE = 8; // ~1.3 seconds of stable marker detection
     let cancelled = false;
     
     const scanLoop = () => {
       if (cancelled || isAutoCapturingRef.current) return;
       
       frameCount++;
-      // Only scan every 5th frame (~6fps at 30fps video) to save CPU
-      if (frameCount % 5 === 0) {
+      // Only scan every 3rd frame (~10fps at 30fps video) — fast enough to feel responsive
+      if (frameCount % 3 === 0) {
         const result = detectMarkersInFrame();
         const detected = result.found;
         
         if (detected && result.markers) {
           consecutiveDetections++;
           setMarkersDetected(true);
-          setLiveMarkers(result.markers);
           
           // For manual capture mode (100-item), just show that markers are detected
           // For auto-capture mode (20/50-item), track stabilization and auto-capture
@@ -529,7 +525,7 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
             setStabilizationProgress(progress);
             
             if (consecutiveDetections >= REQUIRED_CONSECUTIVE) {
-              console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 6).toFixed(1)}s — capturing!`);
+              console.log(`[AutoScan] Markers stable for ${(consecutiveDetections / 10).toFixed(1)}s — capturing!`);
               captureAndProcess();
               return; // stop the loop
             }
@@ -537,7 +533,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         } else {
           consecutiveDetections = 0;
           setMarkersDetected(false);
-          setLiveMarkers(null);
           setStabilizationProgress(0);
         }
       }
@@ -558,22 +553,21 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         autoScanTimerRef.current = null;
       }
       setMarkersDetected(false);
-      setLiveMarkers(null);
       setStabilizationProgress(0);
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // Square guide boxes at the 4 corners where the user should align the paper's
-  // printed corner markers. Each box is a bordered square target zone — the marker
-  // should fit inside the box. This constrains where marker detection looks.
-  useEffect(() => {
+  // Extracted as a callback so it can be triggered immediately on video load/resize,
+  // not just when React state changes (which would cause a visible delay).
+  const drawOverlay = useCallback(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
 
-    const vw = video.clientWidth;
-    const vh = video.clientHeight;
+    // Use offsetWidth/offsetHeight — valid even before loadedmetadata
+    const vw = video.offsetWidth;
+    const vh = video.offsetHeight;
     if (vw === 0 || vh === 0) return;
     canvas.width = vw;
     canvas.height = vh;
@@ -600,17 +594,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
 
     // ── Marker positions as fractions of paper width/height ──
     // These match the actual printed template marker positions from templatePdfGenerator.
-    //
-    // 20-item (105×148.5mm): markerSize=4mm, inset=5mm, topY≈22mm, bottomY≈120mm
-    //   xLeft=5/105≈0.048, xRight=(105-4-5)/105≈0.914
-    //   yTop=22/148.5≈0.148, yBot=120/148.5≈0.808
-    //
-    // 50-item (105×297mm): markerSize=4mm, inset=5mm, topY≈22mm, bottomY≈265mm
-    //   xLeft=0.048, xRight=0.914, yTop=22/297≈0.074, yBot=265/297≈0.892
-    //
-    // 100-item (210×297mm): markerSize=7mm, inset=3mm, topY≈3mm, bottomY≈263mm
-    //   xLeft=3/210≈0.014, xRight=(210-7-3)/210≈0.952
-    //   yTop=3/297≈0.010, yBot=263/297≈0.886
     let mxL: number, mxR: number, myT: number, myB: number;
     if (t === 100) {
       mxL = 0.03; mxR = 0.97; myT = 0.02; myB = 0.90;
@@ -640,7 +623,30 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
       const by = Math.round(p.y - boxSz / 2);
       ctx.strokeRect(bx, by, boxSz, boxSz);
     }
-  }, [liveMarkers, mode]);
+  }, [exam]); // re-draw when exam (template type) changes
+
+  // Redraw the overlay whenever mode enters 'camera', and also attach a
+  // loadedmetadata + resize listener so the boxes appear as soon as the video
+  // element has a size — no waiting for marker detection state to change.
+  useEffect(() => {
+    if (mode !== 'camera') return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Draw immediately (in case video is already sized, e.g. on hot-reload)
+    drawOverlay();
+
+    // Draw again once the video stream has dimensions
+    video.addEventListener('loadedmetadata', drawOverlay);
+
+    // Also redraw on window resize (orientation change on mobile)
+    window.addEventListener('resize', drawOverlay);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', drawOverlay);
+      window.removeEventListener('resize', drawOverlay);
+    };
+  }, [mode, drawOverlay]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
   // Uses 0.25° bins (241 bins total) for sub-degree accuracy.
   // Only edges with high magnitude vote, and votes are weighted by magnitude so strong
