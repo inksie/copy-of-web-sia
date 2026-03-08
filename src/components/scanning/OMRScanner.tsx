@@ -378,10 +378,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     // X margins cover left/right 20-25% of paper to catch the 3.1% / 96.9% positions.
     let marginX: number, topH: number, botY1: number, botY2: number;
     if (t === 100) {
-      marginX = Math.round(dw * 0.20);
-      topH    = Math.round(dh * 0.15);
-      botY1   = Math.round(dh * 0.60);
-      botY2   = Math.round(dh * 0.85);
+      marginX = Math.round(dw * 0.25);  // wider — markers at 3.1%/96.9% of paper width
+      topH    = Math.round(dh * 0.20);  // more headroom at top
+      botY1   = Math.round(dh * 0.55);  // start earlier
+      botY2   = dh;                     // go all the way to bottom edge
     } else if (t === 50) {
       marginX = Math.round(dw * 0.25);
       topH    = Math.round(dh * 0.20);
