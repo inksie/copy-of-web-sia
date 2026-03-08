@@ -372,28 +372,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const step = Math.max(2, Math.floor(markerSize / 4));
     
     const t = getTemplateType();
-    // Search windows per template — tighter constraints matching actual marker positions.
-    // The crop region covers the full paper, so fractions are relative to paper dimensions.
-    //
-    // 20-item: markers at x≈5%/91%, yTop≈15%, yBot≈82% of paper
-    // 50-item: markers at x≈5%/91%, yTop≈7%, yBot≈89% of paper
-    // 100-item: markers at x≈1.5%/95%, yTop≈1%, yBot≈89% of paper
+    // Search windows match the exact marker positions from templatePdfGenerator:
+    //   50-item: yTop≈7.4%, yBot≈79.5%  →  search top 0–20%, bottom 65–100%
+    //   20-item: yTop≈14.8%, yBot≈88.9% →  search top 0–28%, bottom 75–100%
+    //   100-item: yTop≈1%, yBot≈87.9%   →  search top 0–15%, bottom 72–100%
+    // X margins cover left/right 30% of paper to catch the 6.7% / 93.3% positions.
     let marginX: number, topH: number, botY1: number, botY2: number;
     if (t === 100) {
-      marginX = Math.round(dw * 0.30);
-      topH    = Math.round(dh * 0.20);
-      botY1   = Math.round(dh * 0.70);
+      marginX = Math.round(dw * 0.20);
+      topH    = Math.round(dh * 0.15);
+      botY1   = Math.round(dh * 0.72);
       botY2   = dh;
     } else if (t === 50) {
-      marginX = Math.round(dw * 0.30);
+      marginX = Math.round(dw * 0.25);
       topH    = Math.round(dh * 0.20);
-      botY1   = Math.round(dh * 0.75);
-      botY2   = dh;
-    } else {
-      // 20-item: markers are more inset from top/bottom
-      marginX = Math.round(dw * 0.30);
-      topH    = Math.round(dh * 0.30);
       botY1   = Math.round(dh * 0.65);
+      botY2   = Math.round(dh * 0.95);
+    } else {
+      // 20-item
+      marginX = Math.round(dw * 0.25);
+      topH    = Math.round(dh * 0.28);
+      botY1   = Math.round(dh * 0.75);
       botY2   = dh;
     }
     
@@ -526,14 +525,27 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     const paperTop  = midY - gh / 2;
 
     // Marker positions as fractions of paper width/height —
-    // matched to templatePdfGenerator printed marker coords.
+    // Derived exactly from templatePdfGenerator.ts drawMiniSheet/drawFullSheet:
+    //
+    // Mini sheet (20 & 50-item): markerSize=4mm, inset=5mm
+    //   X: left center = (5+2)/paperW, right center = (paperW-5-2)/paperW
+    //   Y top: topBlackSquareY ≈ 22mm from top → 22/paperH
+    //   Y bot (50-item, 105×297): maxQY≈234mm → bottomY=236/297≈0.795
+    //   Y bot (20-item, 105×148.5): maxQY≈130mm → bottomY=132/148.5≈0.889
+    //
+    // Full sheet (100-item, 210×297): markerSize=7mm, inset=3mm
+    //   X: (3+3.5)/210≈0.031, (210-3-3.5)/210≈0.969
+    //   Y top: inset=3mm → 3/297≈0.010
+    //   Y bot: maxQY≈258mm → bottomY=261/297≈0.879
     let mxL: number, mxR: number, myT: number, myB: number;
     if (t === 100) {
-      mxL = 0.03; mxR = 0.97; myT = 0.02; myB = 0.90;
+      mxL = 0.031; mxR = 0.969; myT = 0.010; myB = 0.879;
     } else if (t === 50) {
-      mxL = 0.07; mxR = 0.93; myT = 0.08; myB = 0.90;
+      // 105×297mm
+      mxL = 0.067; mxR = 0.933; myT = 0.074; myB = 0.795;
     } else {
-      mxL = 0.07; mxR = 0.93; myT = 0.15; myB = 0.82;
+      // 20-item, 105×148.5mm
+      mxL = 0.067; mxR = 0.933; myT = 0.148; myB = 0.889;
     }
 
     const boxSz = Math.round(Math.min(vw, vh) * 0.08);
