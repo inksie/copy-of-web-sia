@@ -545,10 +545,9 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
   // ── Draw live overlay onto the canvas ──
-  // Two modes:
-  //   1. No markers detected → dark semi-transparent overlay with a clear paper-shaped
-  //      cutout in the center (ZipGrade shadow guide) so the user knows where to position.
-  //   2. Markers detected → no shadow, just green squares at the 4 corner positions.
+  // ZipGrade layout: solid black letterbox bars on the sides/top/bottom so only
+  // a paper-shaped window of the camera feed is visible. Green corner squares
+  // appear when all 4 markers are detected.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -564,8 +563,32 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
+    // ── Always draw black letterbox bars ──
+    const t = getTemplateType();
+    const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
+
+    // Fit paper shape to fill as much of the viewport as possible
+    let gw = vw;
+    let gh = gw / paperAspect;
+    if (gh > vh) { gh = vh; gw = gh * paperAspect; }
+    const gx = Math.round((vw - gw) / 2);
+    const gy = Math.round((vh - gh) / 2);
+    const gwR = Math.round(gw);
+    const ghR = Math.round(gh);
+
+    // Draw solid black bars around the paper window
+    ctx.fillStyle = '#000000';
+    // Top bar
+    if (gy > 0) ctx.fillRect(0, 0, vw, gy);
+    // Bottom bar
+    if (gy + ghR < vh) ctx.fillRect(0, gy + ghR, vw, vh - (gy + ghR));
+    // Left bar
+    if (gx > 0) ctx.fillRect(0, gy, gx, ghR);
+    // Right bar
+    if (gx + gwR < vw) ctx.fillRect(gx + gwR, gy, vw - (gx + gwR), ghR);
+
+    // ── Green corner squares when markers are detected ──
     if (liveMarkers) {
-      // ── Markers found: green squares with dark border at each corner ──
       const sqSz = Math.round(Math.min(vw, vh) * 0.032);
       const bdr = Math.max(1, Math.round(sqSz * 0.15));
       const corners = [
@@ -582,31 +605,6 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
         ctx.fillStyle = '#22c55e';
         ctx.fillRect(bx, by, sqSz, sqSz);
       }
-    } else {
-      // ── No markers: shadow guide with paper-shaped cutout ──
-      const t = getTemplateType();
-      const paperAspect = t === 50 ? 105 / 297 : t === 100 ? 210 / 297 : 105 / 148.5;
-
-      const PAD = 0.08;
-      const maxW = vw * (1 - PAD * 2);
-      const maxH = vh * (1 - PAD * 2);
-      let gw = maxW;
-      let gh = gw / paperAspect;
-      if (gh > maxH) { gh = maxH; gw = gh * paperAspect; }
-      const gx = Math.round((vw - gw) / 2);
-      const gy = Math.round((vh - gh) / 2);
-      const gwR = Math.round(gw);
-      const ghR = Math.round(gh);
-
-      // Draw full dark overlay, then cut out the paper region
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-      ctx.fillRect(0, 0, vw, vh);
-      ctx.clearRect(gx, gy, gwR, ghR);
-
-      // Thin white border around the cutout for visibility
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(gx, gy, gwR, ghR);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
