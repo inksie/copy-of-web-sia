@@ -221,22 +221,29 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
   // Get the guide frame crop region as fractions of the video dimensions
   const getGuideCropRegion = (videoWidth: number, videoHeight: number): { x: number; y: number; w: number; h: number } => {
     const t = getTemplateType();
-    // These match the CSS guide overlay exactly
-    // 100-item uses a tighter frame (90%) to minimize background inclusion
-    const guideWidthFraction = t === 20 ? 0.75 : t === 50 ? 0.55 : 0.90;
-    const paperAspect = t === 20 ? (105 / 148.5) : t === 50 ? (105 / 297) : (210 / 297); // width / height
+    const paperAspect = t === 50 ? (105 / 297) : t === 100 ? (210 / 297) : (105 / 148.5); // w/h
 
-    // In normalized coordinates (0-1 of video):
-    let guideW = guideWidthFraction; // fraction of video width
-    let guideH = (guideW * videoWidth) / (paperAspect * videoHeight); // fraction of video height
+    // Match the canvas overlay: fit inside 84% of each dimension (100% - 2×8% padding)
+    const maxWfrac = 0.84;
+    const maxHfrac = 0.84;
 
-    // If the guide is taller than the video, clamp to video height and recalculate width
-    if (guideH > 0.95) {
-      guideH = 0.95;
-      guideW = (guideH * videoHeight * paperAspect) / videoWidth;
+    // Fit aspect ratio inside the available box
+    let guideW = maxWfrac;
+    let guideH = guideW / (paperAspect * (videoWidth / videoHeight)); // in video-height fractions... recalc below
+
+    // Work in pixel space then convert back to fractions
+    const maxWpx = videoWidth * maxWfrac;
+    const maxHpx = videoHeight * maxHfrac;
+    let gwPx = maxWpx;
+    let ghPx = gwPx / paperAspect;
+    if (ghPx > maxHpx) {
+      ghPx = maxHpx;
+      gwPx = ghPx * paperAspect;
     }
 
-    // Center the crop
+    guideW = gwPx / videoWidth;
+    guideH = ghPx / videoHeight;
+
     const x = (1 - guideW) / 2;
     const y = (1 - guideH) / 2;
 
@@ -537,12 +544,10 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     };
   }, [mode, stream, exam, detectMarkersInFrame, captureAndProcess]);
 
-  // ── Draw live guide frame + corner squares onto the overlay canvas ──
-  // Runs whenever liveMarkers changes (every ~5th frame = ~6fps).
-  // Always shows:
-  //   • A white rectangular guide frame (where to place the sheet)
-  //   • Small solid squares at each corner (white = searching, green = locked-on)
-  // When all 4 markers are found the frame snaps to the actual paper corners.
+  // ── Draw live corner marker squares onto the overlay canvas ──
+  // ZipGrade style: only show solid green squares at the detected corner marker
+  // positions. No guide frame, no border lines — just the 4 green squares when
+  // all markers are found. Clean camera feed otherwise.
   useEffect(() => {
     const canvas = liveOverlayRef.current;
     const video = videoRef.current;
@@ -558,56 +563,19 @@ export default function OMRScanner({ examId }: OMRScannerProps) {
     if (!ctx) return;
     ctx.clearRect(0, 0, vw, vh);
 
-    const t = getTemplateType();
-    const sqSz = Math.round(Math.min(vw, vh) * 0.038); // corner square size
+    if (!liveMarkers) return; // No markers → clean camera feed, nothing drawn
 
-    if (liveMarkers) {
-      // ── Markers found: snap frame to detected paper corners ──
-      const tl = { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh };
-      const tr = { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh };
-      const bl = { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh };
-      const br = { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh };
-
-      // Draw white semi-transparent guide border (quadrilateral)
-      ctx.beginPath();
-      ctx.moveTo(tl.x, tl.y);
-      ctx.lineTo(tr.x, tr.y);
-      ctx.lineTo(br.x, br.y);
-      ctx.lineTo(bl.x, bl.y);
-      ctx.closePath();
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Draw solid green squares at each corner
-      for (const c of [tl, tr, bl, br]) {
-        ctx.fillStyle = '#22c55e';
-        ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
-      }
-    } else {
-      // ── No markers yet: draw static guide frame ──
-      const guideW = t === 50 ? vw * 0.55 : t === 20 ? vw * 0.75 : vw * 0.90;
-      const guideH = t === 50
-        ? guideW * (297 / 105)
-        : t === 100
-          ? guideW * (297 / 210)
-          : guideW * (148.5 / 105);
-      const gx = Math.round((vw - guideW) / 2);
-      const gy = Math.round((vh - guideH) / 2);
-      const gw = Math.round(guideW);
-      const gh = Math.round(guideH);
-
-      // White border rectangle
-      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(gx, gy, gw, gh);
-
-      // White corner squares
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.fillRect(gx - Math.round(sqSz / 2), gy - Math.round(sqSz / 2), sqSz, sqSz);
-      ctx.fillRect(gx + gw - Math.round(sqSz / 2), gy - Math.round(sqSz / 2), sqSz, sqSz);
-      ctx.fillRect(gx - Math.round(sqSz / 2), gy + gh - Math.round(sqSz / 2), sqSz, sqSz);
-      ctx.fillRect(gx + gw - Math.round(sqSz / 2), gy + gh - Math.round(sqSz / 2), sqSz, sqSz);
+    // Solid green squares at each detected corner marker
+    const sqSz = Math.round(Math.min(vw, vh) * 0.04);
+    const corners = [
+      { x: liveMarkers.tl.x * vw, y: liveMarkers.tl.y * vh },
+      { x: liveMarkers.tr.x * vw, y: liveMarkers.tr.y * vh },
+      { x: liveMarkers.bl.x * vw, y: liveMarkers.bl.y * vh },
+      { x: liveMarkers.br.x * vw, y: liveMarkers.br.y * vh },
+    ];
+    for (const c of corners) {
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(Math.round(c.x - sqSz / 2), Math.round(c.y - sqSz / 2), sqSz, sqSz);
     }
   }, [liveMarkers, mode]);
   // Detects rotation angle up to ±30° using a weighted Sobel-edge histogram (Hough-inspired).
